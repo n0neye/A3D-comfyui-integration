@@ -17,11 +17,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
 # Print a message to console confirming node has loaded (optional, for debugging)
 print("-----------------------------------------")
-print("### Loading: ComfyUI Electron Listener Node ###")
+print("### Loading: ComfyUI Electron Listener Node (with image support) ###")
 # Can print listening port and other info here
 from .electron_http_listener import LISTEN_PORT, server_started_flag
 if server_started_flag:
     print(f"### - Electron HTTP Listener potentially active on port {LISTEN_PORT} ###")
+    print("### - Now supporting image display in node ###")
 else:
     print(f"### - Electron HTTP Listener failed to start or port {LISTEN_PORT} is busy. ###")
 print("-----------------------------------------")

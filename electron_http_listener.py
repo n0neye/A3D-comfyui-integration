@@ -5,6 +5,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket # For checking if port is available
 import os
 # import copy # If deep copying of data is needed
+import numpy as np
+import torch
+import base64
+from PIL import Image
+from io import BytesIO
 
 # --- Global shared state ---
 # Use a simple list (as thread-safe cache) and lock to store the latest data
@@ -39,17 +44,40 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
             # 2. Read request body
             body = self.rfile.read(content_length)
-            data_string = body.decode('utf-8')
-
-            # 3. Parse JSON
-            parsed_data = json.loads(data_string)
-
-            # 4. Update shared data (thread-safe)
-            with data_lock:
-                latest_received_data["payload"] = parsed_data
-                latest_received_data["timestamp"] = time.time()
-            # print(f"[Electron Listener] Received data: {parsed_data}") # Debug: Print received data
-
+            
+            # Check content type
+            content_type = self.headers.get('Content-Type', '')
+            
+            # Process image data
+            if content_type.startswith('image/'):
+                # Directly save binary image data
+                with data_lock:
+                    latest_received_data["payload"] = {
+                        "type": "image",
+                        "content_type": content_type,
+                        "image_data": body
+                    }
+                    latest_received_data["timestamp"] = time.time()
+            # Process JSON data containing base64 image
+            elif content_type.startswith('application/json'):
+                data_string = body.decode('utf-8')
+                parsed_data = json.loads(data_string)
+                
+                # 3. Update shared data (thread-safe)
+                with data_lock:
+                    latest_received_data["payload"] = parsed_data
+                    latest_received_data["timestamp"] = time.time()
+            else:
+                # Process unknown content type
+                data_string = body.decode('utf-8', errors='ignore')
+                with data_lock:
+                    latest_received_data["payload"] = {
+                        "type": "unknown",
+                        "content_type": content_type,
+                        "data": data_string[:1000]  # Limit length to prevent oversized data
+                    }
+                    latest_received_data["timestamp"] = time.time()
+            
             # 5. Send success response
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -151,55 +179,82 @@ class ElectronHttpListenerNode:
         return {
             "required": {}, # Usually no input needed, passively receives
             "optional": {
-                # Add optional trigger for convenience in manually refreshing or connecting to other nodes in workflow
+                # Add optional trigger for convenience in manually refreshing
                 "trigger": ("*", {"forceInput": True}),
-                # Could add a parameter to get data after a specific timestamp, but keeping it simple for now
-                # "since_timestamp": ("FLOAT", {"default": 0.0}),
             }
         }
 
-    RETURN_TYPES = ("STRING", "FLOAT") # Output JSON string and reception timestamp
-    RETURN_NAMES = ("received_data_json", "timestamp")
+    RETURN_TYPES = ("STRING", "FLOAT", "IMAGE") # Add IMAGE output
+    RETURN_NAMES = ("received_data_json", "timestamp", "image")
     FUNCTION = "get_latest_data"
-    CATEGORY = "Utils/Listeners" # Or your preferred category
+    CATEGORY = "Utils/Listeners" 
 
-    # Make it an Output Node (leaf node) if it doesn't trigger subsequent processes
-    # OUTPUT_NODE = True
-
-    def get_latest_data(self, trigger=None, since_timestamp=0.0):
+    # Show image preview in node
+    OUTPUT_NODE = True  # This enables image to display in the node itself
+    
+    def get_latest_data(self, trigger=None):
         global latest_received_data, data_lock, server_started_flag
 
         if not server_started_flag:
             print("[Electron Listener Node] Warning: HTTP Server is not running or failed to start.")
             # Return error or empty state
             error_msg = {"error": "HTTP server not running", "details": f"Check if port {LISTEN_PORT} is available."}
-            return (json.dumps(error_msg), 0.0)
+            # Return empty tensor as image
+            empty_image = torch.zeros((64, 64, 3), dtype=torch.uint8)
+            return (json.dumps(error_msg), 0.0, empty_image)
 
         current_payload = None
         current_timestamp = 0.0
+        image_tensor = None
+        
         with data_lock:
-            # Check if there is new data or if data is newer than requested timestamp
-            if latest_received_data["payload"] is not None and latest_received_data["timestamp"] > since_timestamp:
-                # Do a shallow copy to avoid lock time being too long (usually sufficient for simple JSON data)
-                # Consider deepcopy if data structure is complex or subsequent processing will modify it
-                # current_payload = copy.deepcopy(latest_received_data["payload"])
+            if latest_received_data["payload"] is not None:
                 current_payload = latest_received_data["payload"]
                 current_timestamp = latest_received_data["timestamp"]
-                print(f"[Electron Listener Node] Returning data received at {current_timestamp}") # Debug
-
-                # Optional behavior: Clear after reading, so each message is processed only once (if needed)
-                # latest_received_data["payload"] = None
-                # latest_received_data["timestamp"] = 0
-
+                
+                # Process image data
+                try:
+                    # Check if it's direct image data
+                    if isinstance(current_payload, dict) and current_payload.get("type") == "image":
+                        image_data = current_payload.get("image_data")
+                        if image_data:
+                            img = Image.open(BytesIO(image_data))
+                            img = img.convert('RGB')
+                            image_np = np.array(img)
+                            image_tensor = torch.from_numpy(image_np).permute(2, 0, 1)
+                    
+                    # Check if JSON contains base64 encoded image
+                    elif isinstance(current_payload, dict) and "image_base64" in current_payload:
+                        base64_data = current_payload["image_base64"]
+                        if isinstance(base64_data, str):
+                            # Remove possible data:image/jpeg;base64, prefix
+                            if "base64," in base64_data:
+                                base64_data = base64_data.split("base64,")[1]
+                            
+                            image_data = base64.b64decode(base64_data)
+                            img = Image.open(BytesIO(image_data))
+                            img = img.convert('RGB')
+                            image_np = np.array(img)
+                            image_tensor = torch.from_numpy(image_np)
+                            # ComfyUI expects [B, H, W, C] format
+                            image_tensor = image_tensor.unsqueeze(0)
+                
+                except Exception as e:
+                    print(f"[Electron Listener Node] Error processing image: {e}")
+            
             else:
-                print("[Electron Listener Node] No new data received since last check or initial state.") # Debug
-                pass # No new data, return empty state
+                print("[Electron Listener Node] No new data received since last check or initial state.")
 
+        # If no image data, return empty image
+        if image_tensor is None:
+            # Create a small empty image
+            image_tensor = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
+            
         if current_payload is not None:
-            return (json.dumps(current_payload), current_timestamp)
+            return (json.dumps(current_payload), current_timestamp, image_tensor)
         else:
-            # No data received or no new data, return empty JSON object string and 0 timestamp
-            return ("{}", 0.0)
+            # No data received or no new data
+            return ("{}", 0.0, image_tensor)
 
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation
