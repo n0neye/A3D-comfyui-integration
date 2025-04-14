@@ -83,7 +83,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*') # Allow cross-origin
             self.end_headers()
-            self.wfile.write(json.dumps({'status': 'success', 'message': 'Data received'}).encode('utf-8'))
+            self.wfile.write(json.dumps({'status': 'success', 'message': 'Data received in ' + str(time.time())}).encode('utf-8'))
 
         except json.JSONDecodeError:
             print("[Electron Listener] Received invalid JSON.")
@@ -196,65 +196,87 @@ class ElectronHttpListenerNode:
         global latest_received_data, data_lock, server_started_flag
 
         if not server_started_flag:
-            print("[Electron Listener Node] Warning: HTTP Server is not running or failed to start.")
+            print("[Electron Listener Node] Warning: HTTP Server is not running or failed to start.", flush=True)
             # Return error or empty state
             error_msg = {"error": "HTTP server not running", "details": f"Check if port {LISTEN_PORT} is available."}
-            # Return empty tensor as image
-            empty_image = torch.zeros((64, 64, 3), dtype=torch.uint8)
+            # Return empty tensor as image, ensure BHWC format [1, H, W, C]
+            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
             return (json.dumps(error_msg), 0.0, empty_image)
 
         current_payload = None
         current_timestamp = 0.0
         image_tensor = None
-        
+
         with data_lock:
             if latest_received_data["payload"] is not None:
+                # Shallow copy payload for processing
                 current_payload = latest_received_data["payload"]
                 current_timestamp = latest_received_data["timestamp"]
-                
+
                 # Process image data
                 try:
+                    img = None # Initialize img variable
+
                     # Check if it's direct image data
                     if isinstance(current_payload, dict) and current_payload.get("type") == "image":
                         image_data = current_payload.get("image_data")
                         if image_data:
-                            img = Image.open(BytesIO(image_data))
-                            img = img.convert('RGB')
-                            image_np = np.array(img)
-                            image_tensor = torch.from_numpy(image_np).permute(2, 0, 1)
-                    
+                            print("[Electron Listener Node] Processing direct image data...", flush=True)
+                            img = Image.open(BytesIO(image_data)).convert('RGB')
+
                     # Check if JSON contains base64 encoded image
                     elif isinstance(current_payload, dict) and "image_base64" in current_payload:
                         base64_data = current_payload["image_base64"]
                         if isinstance(base64_data, str):
+                            print("[Electron Listener Node] Processing base64 image data...", flush=True)
                             # Remove possible data:image/jpeg;base64, prefix
                             if "base64," in base64_data:
                                 base64_data = base64_data.split("base64,")[1]
-                            
-                            image_data = base64.b64decode(base64_data)
-                            img = Image.open(BytesIO(image_data))
-                            img = img.convert('RGB')
-                            image_np = np.array(img)
-                            image_tensor = torch.from_numpy(image_np)
-                            # ComfyUI expects [B, H, W, C] format
-                            image_tensor = image_tensor.unsqueeze(0)
-                
-                except Exception as e:
-                    print(f"[Electron Listener Node] Error processing image: {e}")
-            
-            else:
-                print("[Electron Listener Node] No new data received since last check or initial state.")
 
-        # If no image data, return empty image
+                            image_data = base64.b64decode(base64_data)
+                            img = Image.open(BytesIO(image_data)).convert('RGB')
+
+                    # If an image was successfully loaded, convert it to tensor
+                    if img is not None:
+                        image_np = np.array(img).astype(np.uint8)
+                        # Ensure NumPy array is HWC (Height, Width, Channels)
+                        if image_np.ndim == 3 and image_np.shape[2] == 3:
+                             # Convert HWC numpy array to BHWC tensor [Batch, Height, Width, Channels]
+                             image_tensor = torch.from_numpy(image_np).unsqueeze(0)
+                             print(f"[Electron Listener Node] Image converted to tensor with shape: {image_tensor.shape}", flush=True)
+                        else:
+                             print(f"[Electron Listener Node] Warning: Processed image has unexpected shape {image_np.shape}", flush=True)
+
+
+                except Exception as e:
+                    print(f"[Electron Listener Node] Error processing image: {e}", flush=True)
+
+            else:
+                print("[Electron Listener Node] No new data received since last check or initial state.", flush=True)
+
+        # If no image data or processing failed, return empty image
         if image_tensor is None:
-            # Create a small empty image
+            print("[Electron Listener Node] No valid image tensor generated, returning empty tensor.", flush=True)
+            # Create a small empty image in BHWC format
             image_tensor = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
-            
-        if current_payload is not None:
-            return (json.dumps(current_payload), current_timestamp, image_tensor)
+
+        # Determine the payload to return as JSON string
+        payload_to_return = current_payload if current_payload is not None else {}
+
+        # Avoid returning large binary image data in the JSON string if it was sent directly
+        if isinstance(payload_to_return, dict) and payload_to_return.get("type") == "image":
+             payload_summary = {
+                 "type": "image",
+                 "content_type": payload_to_return.get("content_type"),
+                 "status": "received",
+                 "size": len(payload_to_return.get("image_data", b""))
+             }
+             json_output = json.dumps(payload_summary)
         else:
-            # No data received or no new data
-            return ("{}", 0.0, image_tensor)
+             json_output = json.dumps(payload_to_return)
+
+
+        return (json_output, current_timestamp, image_tensor)
 
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation
