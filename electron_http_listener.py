@@ -184,6 +184,11 @@ class ElectronHttpListenerNode:
             }
         }
 
+    # Force the node to refresh every time the user runs a queue
+    @classmethod
+    def IS_CHANGED(cls, trigger):
+        return float("nan") 
+
     RETURN_TYPES = ("STRING", "FLOAT", "IMAGE") # Add IMAGE output
     RETURN_NAMES = ("received_data_json", "timestamp", "image")
     FUNCTION = "get_latest_data"
