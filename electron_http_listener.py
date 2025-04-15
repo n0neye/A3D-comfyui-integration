@@ -17,7 +17,14 @@ import queue # Using queue for thread-safe message passing to SSE clients
 # --- Global shared state ---
 # Use a simple list (as thread-safe cache) and lock to store the latest data
 # Queue.Queue could also be used, but if only the latest message matters, variable+lock is simpler
-latest_received_data = {"payload": None, "timestamp": 0}
+latest_received_data = {
+    "payload": None,
+    "timestamp": 0,
+    "image_base64": None, # Main image for node output processing
+    "color_image_base64": None,
+    "depth_image_base64": None,
+    "openpose_image_base64": None,
+}
 data_lock = threading.Lock()
 server_instance = None
 server_thread = None
@@ -144,15 +151,21 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(f'Electron Listener Node HTTP Server active on port {LISTEN_PORT}. SSE endpoint at /events'.encode('utf-8'))
 
     def do_POST(self):
-        """Handles incoming data via POST and pushes to SSE queue"""
+        """Handles incoming data via POST, stores optional images, and pushes to SSE queue"""
         global latest_received_data, data_lock, sse_message_queue
         content_type = self.headers.get('Content-Type', '')
         content_length = int(self.headers.get('Content-Length', 0))
         response_status = 500
         response_message = {'status': 'error', 'message': 'Internal server error'}
         received_payload = None
-        image_base64_for_sse = None # Store base64 data specifically for SSE push
-        print(f"[POST Handler] Received POST request with content type: {content_type}")
+        # --- Variables to hold base64 data found in this request ---
+        main_image_b64 = None
+        color_image_b64 = None
+        depth_image_b64 = None
+        openpose_image_b64 = None
+        # ---
+
+        print(f"[POST Handler - Thread {threading.get_ident()}] Received POST request with content type: {content_type}")
 
         try:
             if content_length == 0:
@@ -164,60 +177,65 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length)
             current_timestamp = time.time()
 
-            # Process based on content type
             if content_type.startswith('application/json'):
                 print("[POST Handler] Received JSON data.")
                 data_string = body.decode('utf-8')
                 parsed_data = json.loads(data_string)
-                received_payload = parsed_data # Store the parsed JSON
+                received_payload = parsed_data # Store the full original payload
 
-                # Check if JSON contains base64 image for SSE push
-                if isinstance(parsed_data, dict) and "image_base64" in parsed_data:
-                    base64_data = parsed_data["image_base64"]
-                    if isinstance(base64_data, str):
-                        # Remove potential data URI prefix for consistency if needed,
-                        # but JS can handle it, so maybe keep it? Let's keep it for now.
-                        image_base64_for_sse = base64_data
-                        print("[POST Handler] Found base64 image in JSON for SSE.")
-                        # Optionally remove large base64 from the payload stored for the node output
-                        # received_payload["image_base64"] = "[removed for node output]"
+                # --- Extract base64 images from JSON ---
+                if isinstance(parsed_data, dict):
+                    main_image_b64 = parsed_data.get("image_base64")
+                    color_image_b64 = parsed_data.get("color_image_base64")
+                    depth_image_b64 = parsed_data.get("depth_image_base64")
+                    openpose_image_b64 = parsed_data.get("openpose_image_base64")
+
+                    count = sum(1 for img in [main_image_b64, color_image_b64, depth_image_b64, openpose_image_b64] if img)
+                    print(f"[POST Handler] Found {count} base64 image(s) in JSON for processing.")
+                    # ---
 
             else:
-                print(f"[POST Handler] Received unknown content type: {content_type}.")
-                data_string = body.decode('utf-8', errors='ignore')
-                received_payload = {
-                    "type": "unknown",
-                    "content_type": content_type,
-                    "data_preview": data_string[:200] # Store only a preview
-                }
+                print(f"[POST Handler] Received non-JSON content type: {content_type}. Treating as main image if possible.")
+                try:
+                    # Assume it might be image data, try encoding to base64
+                    main_image_b64 = base64.b64encode(body).decode('utf-8')
+                    # Add data URI prefix based on content type if it's an image type
+                    if content_type.startswith('image/'):
+                         main_image_b64 = f"data:{content_type};base64,{main_image_b64}"
+                    print("[POST Handler] Encoded non-JSON body to base64.")
+                    received_payload = {"type": "binary_data", "content_type": content_type}
+                except Exception as enc_e:
+                     print(f"[POST Handler] Could not encode non-JSON body: {enc_e}")
+                     received_payload = {"type": "unknown", "content_type": content_type}
 
-            # Update shared state for the ComfyUI node (thread-safe)
+
+            # --- Update shared state (including optional images) ---
             with data_lock:
                 latest_received_data["payload"] = received_payload
                 latest_received_data["timestamp"] = current_timestamp
-                print("[POST Handler] Updated latest_received_data for node.")
+                # Store base64 data separately for node processing and SSE
+                latest_received_data["image_base64"] = main_image_b64
+                latest_received_data["color_image_base64"] = color_image_b64
+                latest_received_data["depth_image_base64"] = depth_image_b64
+                latest_received_data["openpose_image_base64"] = openpose_image_b64
+                print("[POST Handler] Updated latest_received_data for node and SSE.")
+            # ---
 
             # --- Push message to SSE Queue ---
-            if image_base64_for_sse:
-                sse_payload = {
-                    "type": "new_image",
-                    "timestamp": current_timestamp,
-                    "image_base64": image_base64_for_sse, # Send the actual base64
-                    "content_type": content_type if content_type.startswith('image/') else 'image/jpeg' # Assume jpeg if from json for simplicity
-                }
-                sse_message_queue.put(sse_payload)
-                print("[POST Handler] Image data pushed to SSE queue.")
-            elif received_payload: # Push non-image data too? Optional.
-                 sse_payload = {
-                     "type": "new_data",
-                     "timestamp": current_timestamp,
-                     "payload": received_payload # Send the received payload
-                 }
-                 sse_message_queue.put(sse_payload)
-                 print("[POST Handler] Non-image data pushed to SSE queue.")
+            # Send all available images in one message
+            sse_payload = {
+                "type": "new_images", # Changed type slightly
+                "timestamp": current_timestamp,
+                "image_base64": main_image_b64,
+                "color_image_base64": color_image_b64,
+                "depth_image_base64": depth_image_b64,
+                "openpose_image_base64": openpose_image_b64,
+                "payload": received_payload # Also include original payload if needed by JS
+            }
+            sse_message_queue.put(sse_payload)
+            print("[POST Handler] Image data pushed to SSE queue.")
+            # ---
 
-
-            # Prepare success response
             response_status = 200
             response_message = {'status': 'success', 'message': f'Data received at {current_timestamp}'}
 
@@ -296,9 +314,35 @@ def start_http_server(host, port):
         server_thread = None
         server_started_flag = False # Mark server start as failed
 
+# --- Helper function to convert base64 to tensor ---
+def base64_to_tensor(base64_str):
+    if not base64_str or not isinstance(base64_str, str):
+        return None
+    try:
+        # Remove potential data URI prefix
+        if "base64," in base64_str:
+            base64_str = base64_str.split("base64,")[1]
+
+        image_data = base64.b64decode(base64_str)
+        img = Image.open(BytesIO(image_data)).convert('RGB')
+        image_np = np.array(img).astype(np.uint8)
+
+        if image_np.ndim == 3 and image_np.shape[2] == 3:
+            # Convert HWC numpy array to BHWC tensor [Batch, Height, Width, Channels]
+            image_tensor = torch.from_numpy(image_np).unsqueeze(0)
+            # print(f"[Tensor Conversion] Success. Shape: {image_tensor.shape}") # Debug
+            return image_tensor
+        else:
+            print(f"[Tensor Conversion] Warning: Decoded image has unexpected shape {image_np.shape}")
+            return None
+    except Exception as e:
+        print(f"[Tensor Conversion] Error converting base64 to tensor: {e}")
+        return None
+
 # --- ComfyUI Node Class ---
 class ElectronHttpListenerNode:
-    _server_started = False # Class-level flag to ensure server only starts once
+    _server_started = False
+    # _last_processed_timestamp = 0.0 # IS_CHANGED logic might need review if using timestamp
 
     def __init__(self):
         # Use class-level flag to ensure start_http_server is only called once
@@ -321,99 +365,81 @@ class ElectronHttpListenerNode:
     # Force the node to refresh every time the user runs a queue
     @classmethod
     def IS_CHANGED(cls, trigger):
-        return float("nan") 
+        # Always trigger execution for simplicity with external updates for now
+        # Timestamp logic can be added back if needed for optimization
+        return float("nan")
 
-    RETURN_TYPES = ("STRING", "FLOAT", "IMAGE") # Add IMAGE output
-    RETURN_NAMES = ("received_data_json", "timestamp", "image")
+    # --- Updated Return Types and Names ---
+    RETURN_TYPES = ("STRING", "FLOAT", "IMAGE", "IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("received_data_json", "timestamp", "image", "color_image", "depth_image", "openpose_image")
+    # ---
     FUNCTION = "get_latest_data"
-    CATEGORY = "Utils/Listeners" 
-
-    # Show image preview in node
-    OUTPUT_NODE = True  # This enables image to display in the node itself
+    CATEGORY = "Utils/Listeners"
+    OUTPUT_NODE = True # Keep True for the JS preview widget
     
     def get_latest_data(self, trigger=None):
         global latest_received_data, data_lock, server_started_flag
 
+        # Create a default empty tensor for missing images
+        empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
+
         if not server_started_flag:
-            print("[Electron Listener Node] Warning: HTTP Server is not running or failed to start.", flush=True)
-            # Return error or empty state
-            error_msg = {"error": "HTTP server not running", "details": f"Check if port {LISTEN_PORT} is available."}
-            # Return empty tensor as image, ensure BHWC format [1, H, W, C]
-            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
-            return (json.dumps(error_msg), 0.0, empty_image)
+            print("[Node Execute] Warning: HTTP Server is not running.", flush=True)
+            error_msg = {"error": "HTTP server not running", "details": f"Check port {LISTEN_PORT}."}
+            return (json.dumps(error_msg), 0.0, empty_image, empty_image, empty_image, empty_image)
 
         current_payload = None
         current_timestamp = 0.0
-        image_tensor = None
+        # --- Variables for tensors ---
+        main_tensor = None
+        color_tensor = None
+        depth_tensor = None
+        openpose_tensor = None
+        # ---
 
         with data_lock:
-            if latest_received_data["payload"] is not None:
-                # Shallow copy payload for processing
-                current_payload = latest_received_data["payload"]
-                current_timestamp = latest_received_data["timestamp"]
+            # Get data stored by the last POST request
+            current_payload = latest_received_data["payload"]
+            current_timestamp = latest_received_data["timestamp"]
+            # Get base64 strings
+            main_b64 = latest_received_data["image_base64"]
+            color_b64 = latest_received_data["color_image_base64"]
+            depth_b64 = latest_received_data["depth_image_base64"]
+            op_b64 = latest_received_data["openpose_image_base64"]
+            # Update last processed timestamp if using IS_CHANGED logic
+            # ElectronHttpListenerNode._last_processed_timestamp = current_timestamp
 
-                # Process image data
-                try:
-                    img = None # Initialize img variable
+        print(f"[Node Execute] Executing. Processing data from timestamp: {current_timestamp}", flush=True)
 
-                    # Check if JSON contains base64 encoded image
-                    if isinstance(current_payload, dict) and "image_base64" in current_payload:
-                        base64_data = current_payload["image_base64"]
-                        if isinstance(base64_data, str):
-                            print("[Electron Listener Node] Processing base64 image data...", flush=True)
-                            # Remove possible data:image/jpeg;base64, prefix
-                            if "base64," in base64_data:
-                                base64_data = base64_data.split("base64,")[1]
+        # --- Convert base64 to Tensors ---
+        main_tensor = base64_to_tensor(main_b64)
+        color_tensor = base64_to_tensor(color_b64)
+        depth_tensor = base64_to_tensor(depth_b64)
+        openpose_tensor = base64_to_tensor(op_b64)
+        # ---
 
-                            image_data = base64.b64decode(base64_data)
-                            img = Image.open(BytesIO(image_data)).convert('RGB')
+        # Use empty tensor if conversion failed or data was None
+        main_tensor = main_tensor if main_tensor is not None else empty_image
+        color_tensor = color_tensor if color_tensor is not None else empty_image
+        depth_tensor = depth_tensor if depth_tensor is not None else empty_image
+        openpose_tensor = openpose_tensor if openpose_tensor is not None else empty_image
 
-                    # If an image was successfully loaded, convert it to tensor
-                    if img is not None:
-                        image_np = np.array(img).astype(np.uint8)
-                        # Ensure NumPy array is HWC (Height, Width, Channels)
-                        if image_np.ndim == 3 and image_np.shape[2] == 3:
-                             # Convert HWC numpy array to BHWC tensor [Batch, Height, Width, Channels]
-                             image_tensor = torch.from_numpy(image_np).unsqueeze(0)
-                             print(f"[Electron Listener Node] Image converted to tensor with shape: {image_tensor.shape}", flush=True)
-                        else:
-                             print(f"[Electron Listener Node] Warning: Processed image has unexpected shape {image_np.shape}", flush=True)
-
-
-                except Exception as e:
-                    print(f"[Electron Listener Node] Error processing image: {e}", flush=True)
-
-            else:
-                print("[Electron Listener Node] No new data received since last check or initial state.", flush=True)
-
-        # If no image data or processing failed, return empty image
-        if image_tensor is None:
-            print("[Electron Listener Node] No valid image tensor generated, returning empty tensor.", flush=True)
-            # Create a small empty image in BHWC format
-            image_tensor = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
-
-        # Determine the payload to return as JSON string
         payload_to_return = current_payload if current_payload is not None else {}
+        # Optionally remove large base64 strings from the JSON output if they exist
+        if isinstance(payload_to_return, dict):
+             payload_to_return.pop("image_base64", None)
+             payload_to_return.pop("color_image_base64", None)
+             payload_to_return.pop("depth_image_base64", None)
+             payload_to_return.pop("openpose_image_base64", None)
+        json_output = json.dumps(payload_to_return)
 
-        # Avoid returning large binary image data in the JSON string if it was sent directly
-        if isinstance(payload_to_return, dict) and payload_to_return.get("type") == "image":
-             payload_summary = {
-                 "type": "image",
-                 "content_type": payload_to_return.get("content_type"),
-                 "status": "received",
-                 "size": len(payload_to_return.get("image_data", b""))
-             }
-             json_output = json.dumps(payload_summary)
-        else:
-             json_output = json.dumps(payload_to_return)
-
-
-        return (json_output, current_timestamp, image_tensor)
+        print("[Node Execute] Returning JSON, timestamp, and 4 image tensors.", flush=True)
+        return (json_output, current_timestamp, main_tensor, color_tensor, depth_tensor, openpose_tensor)
 
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation
 # This is more reliable because ComfyUI might not instantiate all nodes immediately
 if not ElectronHttpListenerNode._server_started:
-    print("[Electron Listener Module] Attempting to start server on module load...")
+    print("[Electron Listener Module] Attempting server start on module load...")
     start_http_server(LISTEN_HOST, LISTEN_PORT)
-    ElectronHttpListenerNode._server_started = server_started_flag # Update class flag
+    ElectronHttpListenerNode._server_started = server_started_flag

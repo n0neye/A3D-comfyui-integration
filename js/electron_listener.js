@@ -8,123 +8,200 @@ import { api } from "/scripts/api.js"; // Keep api import for potential future u
 let sseSource = null;
 let sseRetryTimeout = null; // To handle reconnection attempts
 
-// --- Function to update the image preview in a specific node ---
-function updateNodeImagePreview(node, base64Data, contentType) {
-    if (!node) return;
-    console.log(`[Electron Listener JS] Updating preview for node: ${node.title} (ID: ${node.id})`);
+// --- Function to update the image previews in a specific node ---
+function updateNodeImagePreviews(node, messageData) { // Renamed, takes full message
+    if (!node || !messageData) return;
+    console.log(`[Electron Listener JS] Updating previews for node: ${node.title} (ID: ${node.id})`);
 
-    // Find the preview widget (which should be a div now)
-    let previewWidget = node.widgets?.find(w => w.name === "http_preview_div"); // Changed name
+    // Find the main container widget
+    let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
 
-    if (!previewWidget || !previewWidget.element) {
-        console.error("[Electron Listener JS] Preview widget (div) or element not found for node:", node.id);
-        // Attempt to recreate if missing (might happen on graph load/reload)
-        addPreviewWidget(node); // Call the function that creates the widget
-        previewWidget = node.widgets?.find(w => w.name === "http_preview_div");
-        if (!previewWidget || !previewWidget.element) {
-             console.error("[Electron Listener JS] Failed to find/recreate preview widget for node:", node.id);
-             return; // Exit if still not found
+    if (!containerWidget || !containerWidget.elements) {
+        console.error("[Electron Listener JS] Preview container widget or elements not found for node:", node.id);
+        // Attempt to recreate if missing
+        addPreviewWidgets(node); // Call the function that creates the widgets
+        containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
+        if (!containerWidget || !containerWidget.elements) {
+             console.error("[Electron Listener JS] Failed to find/recreate preview container widget for node:", node.id);
+             return;
         }
     }
 
-    // Create an Image object in memory to get dimensions and trigger onload
-    const img = new Image();
+    // Helper function to update a single div's background
+    const updateDivBackground = (divElement, base64Data, defaultText = "N/A") => {
+        if (!divElement) return;
+        if (base64Data && typeof base64Data === 'string') {
+            // Create an Image object in memory to check validity and potentially get size
+            const img = new Image();
+            img.onload = () => {
+                const w = img.naturalWidth;
+                const h = img.naturalHeight;
+                let mimeType = "image/jpeg"; // Default assumption
+                if (base64Data.startsWith('data:image/png')) mimeType = 'image/png';
+                else if (base64Data.startsWith('data:image/webp')) mimeType = 'image/webp';
+                else if (!base64Data.startsWith('data:image/')) {
+                     // Assume jpeg if no prefix
+                } else {
+                     mimeType = ''; // Has prefix already
+                }
+                const dataUri = mimeType ? `data:${mimeType};base64,${base64Data}` : base64Data;
 
-    img.onload = () => {
-        console.log("[Electron Listener JS] Image loaded successfully in memory (for size check).");
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-        console.log(`[Electron Listener JS] Image dimensions: natural=${w}x${h}`);
+                divElement.style.backgroundImage = `url("${dataUri}")`;
+                divElement.textContent = ''; // Clear placeholder text
+                divElement.title = `Preview (${w}x${h})`;
 
-        // Construct the Data URI for the background image
-        let mimeType = "image/jpeg";
-        if (contentType && contentType.startsWith('image/')) {
-            mimeType = contentType;
-        } else if (base64Data.startsWith('data:image/')) {
-             mimeType = ''; // Already has prefix
+                // --- Optional: Resize main node based ONLY on the main image ---
+                if (divElement === containerWidget.elements.main) {
+                    requestAnimationFrame(() => {
+                        try {
+                            const currentWidth = node.size[0];
+                            const ratio = h / w;
+                            // Calculate height based on main image, but consider a max overall height
+                            const mainImageHeight = Math.min(currentWidth * ratio, 300); // Max height for main image area
+                            // Calculate total node height (rough estimate)
+                            const totalHeight = mainImageHeight + 100; // Add space for other previews + padding
+                            const newSize = [currentWidth, totalHeight];
+
+                            console.log(`[Electron Listener JS] Resizing node based on main image: [${newSize[0]}, ${newSize[1]}]`);
+                            node.setSize(newSize);
+                            node.setDirtyCanvas(true, true);
+                        } catch(e) { console.error("Error resizing node:", e); }
+                    });
+                }
+                // --- End Optional Resize ---
+
+            };
+            img.onerror = () => {
+                console.error("[Electron Listener JS] Error loading base64 data for background.");
+                divElement.style.backgroundImage = 'none';
+                divElement.textContent = 'Error';
+                divElement.title = 'Error loading image';
+            };
+            // Set src for the temporary image
+            let tempMimeType = "image/jpeg";
+            if (base64Data.startsWith('data:image/png')) tempMimeType = 'image/png';
+            else if (base64Data.startsWith('data:image/webp')) tempMimeType = 'image/webp';
+            else if (!base64Data.startsWith('data:image/')) { }
+            else { tempMimeType = ''; }
+            const tempDataUri = tempMimeType ? `data:${tempMimeType};base64,${base64Data}` : base64Data;
+            img.src = tempDataUri;
+
+        } else {
+            // No base64 data provided for this slot
+            divElement.style.backgroundImage = 'none';
+            divElement.textContent = defaultText;
+            divElement.title = defaultText;
         }
-        const dataUri = mimeType ? `data:${mimeType};base64,${base64Data}` : base64Data;
-
-        // --- Update the DIV's background ---
-        if (previewWidget.element) {
-             console.log(`[Electron Listener JS] Setting div background image (URI length: ${dataUri.length})`);
-             previewWidget.element.style.backgroundImage = `url("${dataUri}")`;
-             previewWidget.element.title = `Preview (${w}x${h})`; // Update title
-        }
-        // --- End background update ---
     };
 
-    img.onerror = () => {
-        console.error("[Electron Listener JS] Error loading image into memory object.");
-         if (previewWidget.element) {
-            previewWidget.element.textContent = "Error loading preview"; // Show error text in div
-            previewWidget.element.style.backgroundImage = 'none'; // Clear background
-         }
-    };
+    // Update backgrounds for all divs
+    console.log("[Electron Listener JS] Updating preview backgrounds...");
+    updateDivBackground(containerWidget.elements.main, messageData.image_base64, "Waiting...");
+    updateDivBackground(containerWidget.elements.color, messageData.color_image_base64, "Color N/A");
+    updateDivBackground(containerWidget.elements.depth, messageData.depth_image_base64, "Depth N/A");
+    updateDivBackground(containerWidget.elements.openpose, messageData.openpose_image_base64, "Pose N/A");
 
-    // Set the src of the temporary Image object to start loading
-    // Use the full Data URI here as well
-    let tempMimeType = "image/jpeg";
-    if (contentType && contentType.startsWith('image/')) {
-        tempMimeType = contentType;
-    } else if (base64Data.startsWith('data:image/')) {
-         tempMimeType = '';
-    }
-    const tempDataUri = tempMimeType ? `data:${tempMimeType};base64,${base64Data}` : base64Data;
-    img.src = tempDataUri;
-
+    // Request redraw after attempting updates (might be redundant if resize happens)
+    node.setDirtyCanvas(true, true);
 }
 
-// --- Function to add the preview widget (now a div) ---
-function addPreviewWidget(node) {
-     let previewWidget = node.widgets?.find(w => w.name === "http_preview_div");
-     if (!previewWidget) {
-         console.log("[Electron Listener JS] Adding preview div widget for node:", node.id);
-         const div = document.createElement("div");
-         div.className = "electron-http-preview"; // Add a class for potential styling
-         div.style.width = "100%";
-         div.style.height = "256px"; // Initial height
-         div.style.backgroundColor = "#222"; // Placeholder background
-         div.style.color = "#888";
-         div.style.textAlign = "center";
-         div.style.lineHeight = "256px"; // Center placeholder text vertically
-         div.style.fontSize = "14px";
-         div.textContent = "Waiting...";
-         // Background image styles
-         div.style.backgroundSize = "contain";
-         div.style.backgroundPosition = "center";
-         div.style.backgroundRepeat = "no-repeat";
+// --- Function to add the preview widgets (container with 4 divs) ---
+function addPreviewWidgets(node) { // Renamed
+     let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
+     if (!containerWidget) {
+         console.log("[Electron Listener JS] Adding preview container widget for node:", node.id);
+
+         // --- Create Container ---
+         const containerDiv = document.createElement("div");
+         containerDiv.className = "electron-http-preview-container";
+         containerDiv.style.width = "100%";
+         containerDiv.style.display = "flex";
+         containerDiv.style.flexDirection = "column"; // Stack main and row
+         containerDiv.style.gap = "4px"; // Space between main and row
+
+         // --- Create Main Preview Div ---
+         const mainDiv = document.createElement("div");
+         mainDiv.className = "electron-http-preview-main";
+         mainDiv.style.width = "100%";
+         mainDiv.style.height = "200px"; // Initial height for main
+         mainDiv.style.backgroundColor = "#222";
+         mainDiv.style.color = "#888";
+         mainDiv.style.textAlign = "center";
+         mainDiv.style.lineHeight = "200px";
+         mainDiv.style.fontSize = "14px";
+         mainDiv.textContent = "Waiting...";
+         mainDiv.style.backgroundSize = "contain";
+         mainDiv.style.backgroundPosition = "center";
+         mainDiv.style.backgroundRepeat = "no-repeat";
+         containerDiv.appendChild(mainDiv);
+
+         // --- Create Row for Optional Previews ---
+         const optionalRowDiv = document.createElement("div");
+         optionalRowDiv.className = "electron-http-preview-optional-row";
+         optionalRowDiv.style.width = "100%";
+         optionalRowDiv.style.display = "flex";
+         optionalRowDiv.style.gap = "4px"; // Space between optional previews
+         optionalRowDiv.style.height = "80px"; // Height for the row
+         containerDiv.appendChild(optionalRowDiv);
+
+         // --- Create Optional Preview Divs ---
+         const createOptionalDiv = (text) => {
+             const div = document.createElement("div");
+             div.style.flex = "1"; // Share space equally
+             div.style.height = "100%";
+             div.style.backgroundColor = "#2a2a2a";
+             div.style.color = "#777";
+             div.style.textAlign = "center";
+             div.style.lineHeight = "80px";
+             div.style.fontSize = "12px";
+             div.textContent = text;
+             div.style.backgroundSize = "contain";
+             div.style.backgroundPosition = "center";
+             div.style.backgroundRepeat = "no-repeat";
+             optionalRowDiv.appendChild(div);
+             return div;
+         };
+         const colorDiv = createOptionalDiv("Color");
+         const depthDiv = createOptionalDiv("Depth");
+         const openposeDiv = createOptionalDiv("Pose");
+         // ---
 
          try {
-             previewWidget = node.addDOMWidget("http_preview_div", "div", div, { // Changed name and type
-                 serialize: false, // Don't save preview state with workflow
-                 hideOnZoom: false,
+             containerWidget = node.addDOMWidget("http_preview_container", "div", containerDiv, {
+                 serialize: false, hideOnZoom: false,
              });
-             previewWidget.element = div; // Store reference to the div
-
-             // Adjust computeSize if needed - it should return the desired height for the widget space
-             // It no longer directly depends on a child img's naturalHeight
-             previewWidget.computeSize = function(width) {
-                 // Let's try returning the element's current height or a default/max
-                 let targetHeight = 256; // Default/initial height
-                 if (this.element?.style.height && this.element.style.height.endsWith('px')) {
-                     targetHeight = parseInt(this.element.style.height, 10);
-                 }
-                 // Use the actual node size calculation from LiteGraph?
-                 // Or just return a fixed/max height for the widget area?
-                 // Let's base it on the div's styled height for now.
-                 // console.log(`[ComputeSize - Div] Node: ${node.id}, Width: ${width}, Returning H: ${targetHeight}`);
-                 return [width, targetHeight + 4]; // Add padding
+             // Store references to the inner divs on the widget object
+             containerWidget.elements = {
+                 main: mainDiv,
+                 color: colorDiv,
+                 depth: depthDiv,
+                 openpose: openposeDiv
              };
-             // Set initial node size
-             node.setSize(node.computeSize(node.size[0]));
-             console.log("[Electron Listener JS] Successfully added preview div widget.");
+
+             // Compute size based on the container layout
+             containerWidget.computeSize = function(width) {
+                 let mainHeight = 200; // Default
+                 let rowHeight = 80; // Default
+                 if (this.elements?.main?.style.height?.endsWith('px')) {
+                     mainHeight = parseInt(this.elements.main.style.height, 10);
+                 }
+                  if (this.elements?.color?.style.height?.endsWith('px')) { // Use one of the row divs
+                     rowHeight = parseInt(this.elements.color.style.height, 10);
+                 }
+                 const totalHeight = mainHeight + rowHeight + 12; // Add gap + padding
+                 // console.log(`[ComputeSize - Container] Node: ${node.id}, Width: ${width}, Returning H: ${totalHeight}`);
+                 return [width, totalHeight];
+             };
+
+             // Set initial node size based on default widget heights
+             node.setSize(containerWidget.computeSize(node.size[0]));
+             console.log("[Electron Listener JS] Successfully added preview container widget.");
 
          } catch (e) {
-             console.error("[Electron Listener JS] Error adding preview div widget:", e);
+             console.error("[Electron Listener JS] Error adding preview container widget:", e);
          }
      }
-     return previewWidget;
+     return containerWidget;
 }
 
 // --- Function to connect to SSE endpoint ---
@@ -162,28 +239,35 @@ function connectSSE() {
         };
 
         sseSource.onmessage = function(event) {
-            // console.log("[Electron Listener JS] SSE message received:", event.data); // Debug raw data
             try {
                 const messageData = JSON.parse(event.data);
-                // console.log("[Electron Listener JS] Parsed SSE message:", messageData); // Debug parsed data
 
-                if (messageData.type === "new_image" && messageData.image_base64) {
-                    console.log("[Electron Listener JS] Received new image via SSE.");
-                    // Find all ElectronHttpListener nodes currently on the graph
+                // --- Use new message type 'new_images' ---
+                if (messageData.type === "new_images") {
+                    console.log("[Electron Listener JS] Received new images via SSE.");
                     const graph = app.graph;
                     const listenerNodes = graph.findNodesByType("ElectronHttpListener");
 
                     if (listenerNodes && listenerNodes.length > 0) {
                         console.log(`[Electron Listener JS] Found ${listenerNodes.length} listener node(s). Updating...`);
                         listenerNodes.forEach(node => {
-                            updateNodeImagePreview(node, messageData.image_base64, messageData.content_type);
+                            // --- Call the new update function ---
+                            updateNodeImagePreviews(node, messageData);
+                            // ---
                         });
                     } else {
                         console.log("[Electron Listener JS] No ElectronHttpListener nodes found on the graph to update.");
                     }
+                // Handle old 'new_image' type for backward compatibility? Optional.
+                } else if (messageData.type === "new_image" && messageData.image_base64) {
+                     console.log("[Electron Listener JS] Received legacy 'new_image' via SSE. Updating main preview only.");
+                     const graph = app.graph;
+                     const listenerNodes = graph.findNodesByType("ElectronHttpListener");
+                     if (listenerNodes && listenerNodes.length > 0) {
+                         listenerNodes.forEach(node => updateNodeImagePreviews(node, messageData)); // Still use new func
+                     }
                 } else if (messageData.type === "new_data") {
                      console.log("[Electron Listener JS] Received non-image data via SSE:", messageData.payload);
-                     // Optionally update a text widget or log it
                 }
 
             } catch (e) {
@@ -239,12 +323,12 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function() {
                 console.log("[Electron Listener JS] onNodeCreated triggered for node:", this.title, "ID:", this.id);
                 originalOnNodeCreated?.apply(this, arguments);
-                // --- Ensure the preview widget (div) is created ---
-                addPreviewWidget(this);
+                // --- Ensure the preview container widget is created ---
+                addPreviewWidgets(this); // Use new function name
                 // ---
                 console.log("[Electron Listener JS] onNodeCreated finished for:", this.title);
             }
-            console.log("[Electron Listener JS] onNodeCreated override applied (for div widget).");
+            console.log("[Electron Listener JS] onNodeCreated override applied (for container widget).");
 
             // Add onRemoved callback to potentially clean up? (Optional)
             const originalOnRemoved = nodeType.prototype.onRemoved;

@@ -5,8 +5,13 @@ const { promisify } = require('util');
 
 // Configuration
 const SERVER_URL = 'http://localhost:8199';
+const EXAMPLES_DIR = 'examples/';
 const IMAGE_PATHS = ['example.jpg', 'example_2.jpg'];
-const IMAGE_PATH = IMAGE_PATHS[ Math.floor(Math.random() * IMAGE_PATHS.length) ];
+const IMAGE_PATH = EXAMPLES_DIR + IMAGE_PATHS[ Math.floor(Math.random() * IMAGE_PATHS.length) ];
+const MAIN_IMAGE_PATH = EXAMPLES_DIR + 'example.jpg';
+const COLOR_IMAGE_PATH = EXAMPLES_DIR + 'example.jpg';
+const DEPTH_IMAGE_PATH = EXAMPLES_DIR + 'depth.jpg';
+const OPENPOSE_IMAGE_PATH = EXAMPLES_DIR + 'openpose.png';
 
 // Helper function to make HTTP requests
 async function sendRequest(options, data) {
@@ -34,6 +39,32 @@ async function sendRequest(options, data) {
         }
         req.end();
     });
+}
+
+// Function to read and encode an image, returns null if file doesn't exist
+function getImageBase64(imagePath) {
+    if (fs.existsSync(imagePath)) {
+        try {
+            const imageData = fs.readFileSync(imagePath);
+            const base64Data = imageData.toString('base64');
+            // Determine mime type to potentially add prefix (optional, Python handles removal)
+            const ext = path.extname(imagePath).toLowerCase();
+            let mimeType = '';
+            if (ext === '.png') mimeType = 'image/png';
+            else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+            else if (ext === '.webp') mimeType = 'image/webp';
+
+            // Return with prefix for clarity, though Python might strip it
+            // return mimeType ? `data:${mimeType};base64,${base64Data}` : base64Data;
+            return base64Data; // Send raw base64
+        } catch (e) {
+            console.error(`Error reading/encoding image ${imagePath}: ${e.message}`);
+            return null;
+        }
+    } else {
+        console.warn(`Optional image not found: ${imagePath}`);
+        return null;
+    }
 }
 
 // Send image directly
@@ -72,29 +103,41 @@ async function sendImageDirect(imagePath) {
 }
 
 // Send image as base64 in JSON
-async function sendImageAsBase64Json(imagePath) {
-    console.log(`Sending image as base64 in JSON: ${imagePath}`);
-    
-    // Read and encode image
-    const imageData = fs.readFileSync(imagePath);
-    const base64Data = imageData.toString('base64');
-    
-    // Create payload
+async function sendImagesAsBase64Json() {
+    console.log(`Sending images as base64 in JSON`);
+
+    // --- Get base64 for all images ---
+    const mainB64 = getImageBase64(MAIN_IMAGE_PATH);
+    const colorB64 = getImageBase64(COLOR_IMAGE_PATH);
+    const depthB64 = getImageBase64(DEPTH_IMAGE_PATH);
+    const openposeB64 = getImageBase64(OPENPOSE_IMAGE_PATH);
+    // ---
+
+    if (!mainB64) {
+        console.error(`Error: Main image file not found or failed to encode: ${MAIN_IMAGE_PATH}`);
+        return;
+    }
+
+    // Create payload, only include keys if data exists
     const payload = {
-        image_base64: base64Data,
+        image_base64: mainB64, // Main image is required here
         metadata: {
-            filename: path.basename(imagePath),
+            filename: path.basename(MAIN_IMAGE_PATH),
             timestamp: Date.now() / 1000,
             test_mode: true
         }
     };
-    
+    if (colorB64) payload.color_image_base64 = colorB64;
+    if (depthB64) payload.depth_image_base64 = depthB64;
+    if (openposeB64) payload.openpose_image_base64 = openposeB64;
+    // ---
+
     const jsonData = JSON.stringify(payload);
-    
+
     // Prepare request options
     const options = {
         hostname: 'localhost',
-        port: 8199,
+        port: 8199, // Ensure this matches Python LISTEN_PORT
         path: '/',
         method: 'POST',
         headers: {
@@ -102,10 +145,10 @@ async function sendImageAsBase64Json(imagePath) {
             'Content-Length': Buffer.byteLength(jsonData)
         }
     };
-    
+
     // Send request
     try {
-        console.log(`Sending request...`);
+        console.log(`Sending request with ${Object.keys(payload).length -1} image(s)...`); // -1 for metadata
         const response = await sendRequest(options, jsonData);
         console.log(`Status Code: ${response.statusCode}`);
         console.log(`Response: ${response.body}`);
@@ -176,22 +219,16 @@ function checkImageResolution(imagePath) {
 
 // Main function
 async function main() {
-    // Check if image exists
-    if (!fs.existsSync(IMAGE_PATH)) {
-        console.error(`Error: Image file not found: ${IMAGE_PATH}`);
-        console.error('Please place an example.jpg file in the same directory as this script.');
+    // Check if main image exists
+    if (!fs.existsSync(MAIN_IMAGE_PATH)) {
+        console.error(`Error: Main image file not found: ${MAIN_IMAGE_PATH}`);
         process.exit(1);
     }
-    
-    // Check image properties
-    checkImageResolution(IMAGE_PATH);
-    
-    // Send the image using all methods
-    // await sendImageDirect(IMAGE_PATH);
-    await sendImageAsBase64Json(IMAGE_PATH);
-    // await sendImageAsDataUri(IMAGE_PATH);
-    
-    console.log('All test methods completed!');
+
+    // Send the images
+    await sendImagesAsBase64Json();
+
+    console.log('Test completed!');
 }
 
 // Run the program
