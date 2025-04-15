@@ -8,102 +8,123 @@ import { api } from "/scripts/api.js"; // Keep api import for potential future u
 let sseSource = null;
 let sseRetryTimeout = null; // To handle reconnection attempts
 
-// --- Function to update the image widget in a specific node ---
+// --- Function to update the image preview in a specific node ---
 function updateNodeImagePreview(node, base64Data, contentType) {
     if (!node) return;
     console.log(`[Electron Listener JS] Updating preview for node: ${node.title} (ID: ${node.id})`);
 
-    // Find or create the image widget
-    let imgWidget = node.widgets?.find(w => w.name === "http_preview_image");
+    // Find the preview widget (which should be a div now)
+    let previewWidget = node.widgets?.find(w => w.name === "http_preview_div"); // Changed name
 
-    if (!imgWidget) {
-        console.log("[Electron Listener JS] Image widget not found. Creating new one...");
-        const img = document.createElement("img");
-        img.style.width = "100%";
-        img.style.objectFit = "contain";
-        img.style.maxHeight = "256px";
-        img.style.display = "block";
-        img.alt = "HTTP Preview";
-        img.title = "Preview from HTTP Listener (via SSE)";
-
-        try {
-            imgWidget = node.addDOMWidget("http_preview_image", "img", img, {});
-            imgWidget.element = img;
-            imgWidget.computeSize = function(width) {
-                // Add logging inside computeSize
-                if (this.element?.naturalWidth && this.element?.naturalHeight) {
-                    const ratio = this.element.naturalHeight / this.element.naturalWidth;
-                    const height = width * ratio;
-                    const computedHeight = Math.min(height, 256);
-                    // console.log(`[ComputeSize] Node: ${node.id}, Width: ${width}, Natural H: ${this.element.naturalHeight}, Natural W: ${this.element.naturalWidth}, Computed H: ${computedHeight}`);
-                    return [width, computedHeight + 4];
-                }
-                 // console.log(`[ComputeSize] Node: ${node.id}, Defaulting size [${width}, 100]`);
-                return [width, 100];
-            };
-            console.log("[Electron Listener JS] Successfully added DOM widget.");
-            node.setSize(node.computeSize());
-        } catch (e) {
-            console.error("[Electron Listener JS] Error adding DOM widget:", e);
-            return;
+    if (!previewWidget || !previewWidget.element) {
+        console.error("[Electron Listener JS] Preview widget (div) or element not found for node:", node.id);
+        // Attempt to recreate if missing (might happen on graph load/reload)
+        addPreviewWidget(node); // Call the function that creates the widget
+        previewWidget = node.widgets?.find(w => w.name === "http_preview_div");
+        if (!previewWidget || !previewWidget.element) {
+             console.error("[Electron Listener JS] Failed to find/recreate preview widget for node:", node.id);
+             return; // Exit if still not found
         }
-    } else {
-         console.log("[Electron Listener JS] Found existing image widget.");
     }
 
-    // Update the image source using Data URI
-    if (imgWidget && imgWidget.element) {
+    // Create an Image object in memory to get dimensions and trigger onload
+    const img = new Image();
+
+    img.onload = () => {
+        console.log("[Electron Listener JS] Image loaded successfully in memory (for size check).");
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        console.log(`[Electron Listener JS] Image dimensions: natural=${w}x${h}`);
+
+        // Construct the Data URI for the background image
         let mimeType = "image/jpeg";
         if (contentType && contentType.startsWith('image/')) {
             mimeType = contentType;
         } else if (base64Data.startsWith('data:image/')) {
-             mimeType = '';
+             mimeType = ''; // Already has prefix
         }
         const dataUri = mimeType ? `data:${mimeType};base64,${base64Data}` : base64Data;
 
-        console.log(`[Electron Listener JS] Setting image source (Data URI, length: ${dataUri.length})`);
-        imgWidget.element.src = dataUri; // Set the source
-
-        imgWidget.element.onload = () => {
-            console.log("[Electron Listener JS] Image loaded successfully via SSE.");
-            const w = imgWidget.element.naturalWidth;
-            const h = imgWidget.element.naturalHeight;
-            const clientW = imgWidget.element.clientWidth;
-            const clientH = imgWidget.element.clientHeight;
-            // Log dimensions *before* potential resize/redraw
-            console.log(`[Electron Listener JS] Image dimensions (before resize attempt): natural=${w}x${h}, client=${clientW}x${clientH}`);
-
-            // --- Delay resize and redraw using requestAnimationFrame ---
-            requestAnimationFrame(() => {
-                try {
-                    // Recalculate the node size based on the now-loaded image dimensions
-                    const newSize = node.computeSize();
-                    console.log(`[Electron Listener JS] Computed new node size: [${newSize[0]}, ${newSize[1]}]`);
-                    node.setSize(newSize);
-
-                    // Log dimensions *after* setSize attempt
-                    const postClientW = imgWidget.element.clientWidth;
-                    const postClientH = imgWidget.element.clientHeight;
-                    console.log(`[Electron Listener JS] Image dimensions (after setSize): client=${postClientW}x${postClientH}`);
-
-                    // Request redraw *after* setting the size
-                    node.setDirtyCanvas(true, true);
-                    console.log("[Electron Listener JS] Requested redraw inside requestAnimationFrame.");
-                } catch (e) {
-                     console.error("[Electron Listener JS] Error during delayed resize/redraw:", e);
-                }
-            });
-            // --- End of delayed logic ---
+        // --- Update the DIV's background ---
+        if (previewWidget.element) {
+             console.log(`[Electron Listener JS] Setting div background image (URI length: ${dataUri.length})`);
+             previewWidget.element.style.backgroundImage = `url("${dataUri}")`;
+             previewWidget.element.title = `Preview (${w}x${h})`; // Update title
         }
+        // --- End background update ---
+    };
 
-        imgWidget.element.onerror = () => {
-            console.error("[Electron Listener JS] Error loading image from Data URI.");
-            imgWidget.element.alt = "Error loading preview";
-            node.setDirtyCanvas(true, true);
-        }
-    } else {
-        console.error("[Electron Listener JS] Image widget or element not found after creation/find attempt.");
+    img.onerror = () => {
+        console.error("[Electron Listener JS] Error loading image into memory object.");
+         if (previewWidget.element) {
+            previewWidget.element.textContent = "Error loading preview"; // Show error text in div
+            previewWidget.element.style.backgroundImage = 'none'; // Clear background
+         }
+    };
+
+    // Set the src of the temporary Image object to start loading
+    // Use the full Data URI here as well
+    let tempMimeType = "image/jpeg";
+    if (contentType && contentType.startsWith('image/')) {
+        tempMimeType = contentType;
+    } else if (base64Data.startsWith('data:image/')) {
+         tempMimeType = '';
     }
+    const tempDataUri = tempMimeType ? `data:${tempMimeType};base64,${base64Data}` : base64Data;
+    img.src = tempDataUri;
+
+}
+
+// --- Function to add the preview widget (now a div) ---
+function addPreviewWidget(node) {
+     let previewWidget = node.widgets?.find(w => w.name === "http_preview_div");
+     if (!previewWidget) {
+         console.log("[Electron Listener JS] Adding preview div widget for node:", node.id);
+         const div = document.createElement("div");
+         div.className = "electron-http-preview"; // Add a class for potential styling
+         div.style.width = "100%";
+         div.style.height = "256px"; // Initial height
+         div.style.backgroundColor = "#222"; // Placeholder background
+         div.style.color = "#888";
+         div.style.textAlign = "center";
+         div.style.lineHeight = "256px"; // Center placeholder text vertically
+         div.style.fontSize = "14px";
+         div.textContent = "Waiting...";
+         // Background image styles
+         div.style.backgroundSize = "contain";
+         div.style.backgroundPosition = "center";
+         div.style.backgroundRepeat = "no-repeat";
+
+         try {
+             previewWidget = node.addDOMWidget("http_preview_div", "div", div, { // Changed name and type
+                 serialize: false, // Don't save preview state with workflow
+                 hideOnZoom: false,
+             });
+             previewWidget.element = div; // Store reference to the div
+
+             // Adjust computeSize if needed - it should return the desired height for the widget space
+             // It no longer directly depends on a child img's naturalHeight
+             previewWidget.computeSize = function(width) {
+                 // Let's try returning the element's current height or a default/max
+                 let targetHeight = 256; // Default/initial height
+                 if (this.element?.style.height && this.element.style.height.endsWith('px')) {
+                     targetHeight = parseInt(this.element.style.height, 10);
+                 }
+                 // Use the actual node size calculation from LiteGraph?
+                 // Or just return a fixed/max height for the widget area?
+                 // Let's base it on the div's styled height for now.
+                 // console.log(`[ComputeSize - Div] Node: ${node.id}, Width: ${width}, Returning H: ${targetHeight}`);
+                 return [width, targetHeight + 4]; // Add padding
+             };
+             // Set initial node size
+             node.setSize(node.computeSize(node.size[0]));
+             console.log("[Electron Listener JS] Successfully added preview div widget.");
+
+         } catch (e) {
+             console.error("[Electron Listener JS] Error adding preview div widget:", e);
+         }
+     }
+     return previewWidget;
 }
 
 // --- Function to connect to SSE endpoint ---
@@ -204,10 +225,8 @@ function connectSSE() {
 
 // --- ComfyUI Extension Registration ---
 app.registerExtension({
-    name: "Comfy.ElectronHttpListener.ImagePreviewSSE", // Renamed slightly
+    name: "Comfy.ElectronHttpListener.ImagePreviewSSE",
     setup() {
-        // This function runs once when the ComfyUI app is ready.
-        // It's a good place to establish the initial SSE connection.
         console.log("[Electron Listener JS] Extension setup(). Connecting SSE...");
         connectSSE();
     },
@@ -216,48 +235,25 @@ app.registerExtension({
         if (nodeData.name === "ElectronHttpListener") {
             console.log("[Electron Listener JS] Matched node type: ElectronHttpListener.");
 
-            // We don't need to override onExecuted for the preview anymore.
-            // Keep onNodeCreated to potentially initialize the widget state or appearance.
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function() {
-                console.log("[Electron Listener JS] onNodeCreated triggered for node:", this.title);
+                console.log("[Electron Listener JS] onNodeCreated triggered for node:", this.title, "ID:", this.id);
                 originalOnNodeCreated?.apply(this, arguments);
-
-                // Optionally add an empty placeholder widget immediately on creation
-                let imgWidget = this.widgets?.find(w => w.name === "http_preview_image");
-                if (!imgWidget) {
-                     console.log("[Electron Listener JS] Adding initial placeholder widget on node creation.");
-                     const img = document.createElement("img");
-                     img.style.width = "100%";
-                     img.style.objectFit = "contain";
-                     img.style.maxHeight = "256px";
-                     img.style.minHeight = "256px";
-                     img.style.display = "block";
-                     img.alt = "Waiting for preview...";
-                     img.title = "Preview from HTTP Listener (via SSE)";
-                     // Set a default small size or placeholder image?
-                    //  img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; // Transparent pixel
-
-                     try {
-                         imgWidget = this.addDOMWidget("http_preview_image", "img", img, {});
-                         imgWidget.element = img;
-                         imgWidget.computeSize = function(width) { /* ... same computeSize as above ... */
-                             if (this.element?.naturalWidth && this.element?.naturalHeight) {
-                                 const ratio = this.element.naturalHeight / this.element.naturalWidth;
-                                 const height = width * ratio;
-                                 const computedHeight = Math.min(height, 256);
-                                 return [width, computedHeight + 4];
-                             }
-                             return [width, 100]; // Default size
-                         };
-                         this.setSize(this.computeSize());
-                     } catch (e) {
-                         console.error("[Electron Listener JS] Error adding placeholder DOM widget:", e);
-                     }
-                }
+                // --- Ensure the preview widget (div) is created ---
+                addPreviewWidget(this);
+                // ---
                 console.log("[Electron Listener JS] onNodeCreated finished for:", this.title);
             }
-            console.log("[Electron Listener JS] onNodeCreated override applied.");
+            console.log("[Electron Listener JS] onNodeCreated override applied (for div widget).");
+
+            // Add onRemoved callback to potentially clean up? (Optional)
+            const originalOnRemoved = nodeType.prototype.onRemoved;
+            nodeType.prototype.onRemoved = function() {
+                 console.log("[Electron Listener JS] Node removed:", this.id);
+                 // Cleanup logic if needed
+                 originalOnRemoved?.apply(this, arguments);
+            };
+
         }
     },
 });
