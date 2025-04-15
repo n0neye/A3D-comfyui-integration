@@ -251,9 +251,26 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             # Send HTTP response
             self.send_response(response_status)
             self.send_header('Content-type', 'application/json')
+            
+            # Add all CORS headers consistently
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Content-Length')
+            
             self.end_headers()
             self.wfile.write(json.dumps(response_message).encode('utf-8'))
+
+    def do_OPTIONS(self):
+        """Handle preflight CORS requests"""
+        print(f"[OPTIONS Handler] Received CORS preflight request from {self.address_string()}")
+        
+        # Send response with CORS headers
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Content-Length')
+        self.send_header('Access-Control-Max-Age', '86400')  # Cache preflight for 24 hours
+        self.end_headers()
 
     def log_message(self, format, *args):
         # Keep console cleaner
