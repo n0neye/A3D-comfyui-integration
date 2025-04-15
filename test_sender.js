@@ -5,7 +5,8 @@ const { promisify } = require('util');
 
 // Configuration
 const SERVER_URL = 'http://localhost:8199';
-const IMAGE_PATH = 'example.jpg';
+const IMAGE_PATHS = ['example.jpg', 'example_2.jpg'];
+const IMAGE_PATH = IMAGE_PATHS[ Math.floor(Math.random() * IMAGE_PATHS.length) ];
 
 // Helper function to make HTTP requests
 async function sendRequest(options, data) {
@@ -104,6 +105,7 @@ async function sendImageAsBase64Json(imagePath) {
     
     // Send request
     try {
+        console.log(`Sending request...`);
         const response = await sendRequest(options, jsonData);
         console.log(`Status Code: ${response.statusCode}`);
         console.log(`Response: ${response.body}`);
@@ -185,9 +187,9 @@ async function main() {
     checkImageResolution(IMAGE_PATH);
     
     // Send the image using all methods
-    await sendImageDirect(IMAGE_PATH);
+    // await sendImageDirect(IMAGE_PATH);
     await sendImageAsBase64Json(IMAGE_PATH);
-    await sendImageAsDataUri(IMAGE_PATH);
+    // await sendImageAsDataUri(IMAGE_PATH);
     
     console.log('All test methods completed!');
 }

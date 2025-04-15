@@ -1,7 +1,9 @@
 import threading
 import json
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from http.server import HTTPServer
 import socket # For checking if port is available
 import os
 # import copy # If deep copying of data is needed
@@ -10,6 +12,7 @@ import torch
 import base64
 from PIL import Image
 from io import BytesIO
+import queue # Using queue for thread-safe message passing to SSE clients
 
 # --- Global shared state ---
 # Use a simple list (as thread-safe cache) and lock to store the latest data
@@ -19,99 +22,235 @@ data_lock = threading.Lock()
 server_instance = None
 server_thread = None
 server_started_flag = False  # Flag to mark whether the server has started successfully
+# --- SSE Specific Globals ---
+sse_clients = set() # Thread-safe set to store client connections (wfile objects)
+sse_clients_lock = threading.Lock()
+sse_message_queue = queue.Queue() # Queue to send messages from POST handler to SSE handler thread
+
 # --- Configuration ---
 DEFAULT_PORT = 8199 # Choose a port (avoid commonly used ports like 8188)
 # Try to get port from environment variable for flexibility
 LISTEN_PORT = int(os.environ.get('ELECTRON_LISTENER_PORT', DEFAULT_PORT))
 LISTEN_HOST = '0.0.0.0' # Listen on all network interfaces
 
-# --- HTTP Request Handler ---
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    """Handles POST requests from Electron"""
-    def do_POST(self):
-        global latest_received_data, data_lock
-        try:
-            # 1. Get the request body length
-            content_length = int(self.headers.get('Content-Length', 0))
-            if content_length == 0:
-                print("[Electron Listener] Received POST with no data.")
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*') # Allow cross-origin
-                self.end_headers()
-                self.wfile.write(json.dumps({'status': 'error', 'message': 'No data received'}).encode('utf-8'))
-                return
+# --- Function to broadcast messages to SSE clients ---
+def broadcast_sse_message(message_data):
+    """Sends a message to all connected SSE clients."""
+    global sse_clients, sse_clients_lock
+    # Format message according to SSE spec (data: json_string\n\n)
+    sse_formatted_message = f"data: {json.dumps(message_data)}\n\n"
+    sse_message_bytes = sse_formatted_message.encode('utf-8')
 
-            # 2. Read request body
-            body = self.rfile.read(content_length)
-            
-            # Check content type
-            content_type = self.headers.get('Content-Type', '')
-            
-            # Process image data
-            if content_type.startswith('image/'):
-                # Directly save binary image data
-                with data_lock:
-                    latest_received_data["payload"] = {
-                        "type": "image",
-                        "content_type": content_type,
-                        "image_data": body
-                    }
-                    latest_received_data["timestamp"] = time.time()
-            # Process JSON data containing base64 image
-            elif content_type.startswith('application/json'):
-                data_string = body.decode('utf-8')
-                parsed_data = json.loads(data_string)
-                
-                # 3. Update shared data (thread-safe)
-                with data_lock:
-                    latest_received_data["payload"] = parsed_data
-                    latest_received_data["timestamp"] = time.time()
-            else:
-                # Process unknown content type
-                data_string = body.decode('utf-8', errors='ignore')
-                with data_lock:
-                    latest_received_data["payload"] = {
-                        "type": "unknown",
-                        "content_type": content_type,
-                        "data": data_string[:1000]  # Limit length to prevent oversized data
-                    }
-                    latest_received_data["timestamp"] = time.time()
-            
-            # 5. Send success response
+    disconnected_clients = set()
+    with sse_clients_lock:
+        # print(f"[SSE Broadcast] Sending to {len(sse_clients)} clients. Message: {message_data.get('type')}") # Debug
+        for client_wfile in sse_clients:
+            try:
+                client_wfile.write(sse_message_bytes)
+                # Flushing might be necessary depending on server/client buffering
+                # client_wfile.flush() # Be cautious with flush in loops, might block
+            except socket.error as e:
+                # Detect broken pipe or connection reset
+                if e.errno == 32 or e.errno == 104: # Broken pipe (Linux), Connection reset by peer (Linux)
+                    print(f"[SSE Broadcast] Client disconnected (socket error {e.errno}). Removing.")
+                    disconnected_clients.add(client_wfile)
+                else:
+                    print(f"[SSE Broadcast] Error sending to client: {e}")
+                    disconnected_clients.add(client_wfile) # Remove on other errors too
+            except Exception as e:
+                 print(f"[SSE Broadcast] Unexpected error sending to client: {e}")
+                 disconnected_clients.add(client_wfile) # Remove on unexpected errors
+
+        # Remove disconnected clients outside the iteration loop
+        for client in disconnected_clients:
+            sse_clients.discard(client) # Use discard to avoid error if already removed
+
+# --- SSE Message Queue Processor Thread ---
+def sse_queue_processor():
+    """Dedicated thread to process messages and broadcast them via SSE."""
+    print("[SSE Processor] Starting SSE message processor thread.")
+    while True:
+        try:
+            # Wait indefinitely for a message
+            message = sse_message_queue.get()
+            if message is None: # Use None as a signal to stop the thread
+                 print("[SSE Processor] Received stop signal. Exiting.")
+                 break
+            # print("[SSE Processor] Got message from queue, broadcasting...") # Debug
+            broadcast_sse_message(message)
+            sse_message_queue.task_done() # Mark task as complete
+        except Exception as e:
+            print(f"[SSE Processor] Error processing queue: {e}")
+            # Avoid exiting the thread on error, just log it
+    print("[SSE Processor] SSE message processor thread stopped.")
+
+# Start the SSE processor thread globally
+sse_processor_thread = threading.Thread(target=sse_queue_processor, daemon=True)
+sse_processor_thread.start()
+
+# --- HTTP Request Handler (Handles POST and SSE GET) ---
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    """Handles POST requests and SSE GET requests"""
+
+    def do_GET(self):
+        """Handles SSE connections on /events and basic GET"""
+        global sse_clients, sse_clients_lock
+        if self.path == '/events':
+            # --- Handle SSE Connection ---
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'keep-alive')
             self.send_header('Access-Control-Allow-Origin', '*') # Allow cross-origin
             self.end_headers()
-            self.wfile.write(json.dumps({'status': 'success', 'message': 'Data received in ' + str(time.time())}).encode('utf-8'))
+            print(f"[SSE Handler - Thread {threading.get_ident()}] New SSE client connected.")
+
+            client_wfile = self.wfile # Get the client's write stream
+
+            # Add client to the set
+            with sse_clients_lock:
+                sse_clients.add(client_wfile)
+                print(f"[SSE Handler] Total SSE clients: {len(sse_clients)}")
+
+            try:
+                # Keep the connection open. The actual sending happens in broadcast_sse_message.
+                # We need a way to detect disconnection here. Reading is one way.
+                # Reading blocks, so this might not be ideal if we need the handler thread for other things.
+                # A simple heartbeat or just relying on write errors in broadcast might be sufficient.
+                # Let's just keep it open and rely on write errors for now.
+                while True:
+                    # Send a heartbeat comment every 15 seconds to keep connection alive
+                    # and help detect disconnects sooner on some proxies/browsers
+                    time.sleep(15)
+                    self.wfile.write(":heartbeat\n\n".encode('utf-8'))
+
+            except socket.error as e:
+                 # Client disconnected
+                 print(f"[SSE Handler - Thread {threading.get_ident()}] SSE client disconnected (socket error: {e}).")
+            except Exception as e:
+                 print(f"[SSE Handler - Thread {threading.get_ident()}] Error in SSE keep-alive: {e}")
+            finally:
+                 # Remove client on disconnect or error
+                 with sse_clients_lock:
+                     sse_clients.discard(client_wfile)
+                     print(f"[SSE Handler - Thread {threading.get_ident()}] SSE client removed. Total SSE clients: {len(sse_clients)}")
+
+        else:
+            # --- Handle other GET requests (e.g., health check) ---
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(f'Electron Listener Node HTTP Server active on port {LISTEN_PORT}. SSE endpoint at /events'.encode('utf-8'))
+
+    def do_POST(self):
+        """Handles incoming data via POST and pushes to SSE queue"""
+        global latest_received_data, data_lock, sse_message_queue
+        content_type = self.headers.get('Content-Type', '')
+        content_length = int(self.headers.get('Content-Length', 0))
+        response_status = 500
+        response_message = {'status': 'error', 'message': 'Internal server error'}
+        received_payload = None
+        image_base64_for_sse = None # Store base64 data specifically for SSE push
+        print(f"[POST Handler] Received POST request with content type: {content_type}")
+
+        try:
+            if content_length == 0:
+                print("[POST Handler] Received POST with no data.")
+                response_status = 400
+                response_message = {'status': 'error', 'message': 'No data received'}
+                return # Use finally block to send response
+
+            body = self.rfile.read(content_length)
+            current_timestamp = time.time()
+
+            # Process based on content type
+            if content_type.startswith('image/'):
+                print(f"[POST Handler] Received direct image data ({content_type}).")
+                # Store payload info (without raw data for latest_received_data)
+                received_payload = {
+                    "type": "image_direct",
+                    "content_type": content_type,
+                    "size": len(body)
+                }
+                # Generate base64 for SSE push
+                image_base64_for_sse = base64.b64encode(body).decode('utf-8')
+
+            elif content_type.startswith('application/json'):
+                print("[POST Handler] Received JSON data.")
+                data_string = body.decode('utf-8')
+                parsed_data = json.loads(data_string)
+                received_payload = parsed_data # Store the parsed JSON
+
+                # Check if JSON contains base64 image for SSE push
+                if isinstance(parsed_data, dict) and "image_base64" in parsed_data:
+                    base64_data = parsed_data["image_base64"]
+                    if isinstance(base64_data, str):
+                        # Remove potential data URI prefix for consistency if needed,
+                        # but JS can handle it, so maybe keep it? Let's keep it for now.
+                        image_base64_for_sse = base64_data
+                        print("[POST Handler] Found base64 image in JSON for SSE.")
+                        # Optionally remove large base64 from the payload stored for the node output
+                        # received_payload["image_base64"] = "[removed for node output]"
+
+            else:
+                print(f"[POST Handler] Received unknown content type: {content_type}.")
+                data_string = body.decode('utf-8', errors='ignore')
+                received_payload = {
+                    "type": "unknown",
+                    "content_type": content_type,
+                    "data_preview": data_string[:200] # Store only a preview
+                }
+
+            # Update shared state for the ComfyUI node (thread-safe)
+            with data_lock:
+                latest_received_data["payload"] = received_payload
+                latest_received_data["timestamp"] = current_timestamp
+                print("[POST Handler] Updated latest_received_data for node.")
+
+            # --- Push message to SSE Queue ---
+            if image_base64_for_sse:
+                sse_payload = {
+                    "type": "new_image",
+                    "timestamp": current_timestamp,
+                    "image_base64": image_base64_for_sse, # Send the actual base64
+                    "content_type": content_type if content_type.startswith('image/') else 'image/jpeg' # Assume jpeg if from json for simplicity
+                }
+                sse_message_queue.put(sse_payload)
+                print("[POST Handler] Image data pushed to SSE queue.")
+            elif received_payload: # Push non-image data too? Optional.
+                 sse_payload = {
+                     "type": "new_data",
+                     "timestamp": current_timestamp,
+                     "payload": received_payload # Send the received payload
+                 }
+                 sse_message_queue.put(sse_payload)
+                 print("[POST Handler] Non-image data pushed to SSE queue.")
+
+
+            # Prepare success response
+            response_status = 200
+            response_message = {'status': 'success', 'message': f'Data received at {current_timestamp}'}
 
         except json.JSONDecodeError:
-            print("[Electron Listener] Received invalid JSON.")
-            self.send_response(400)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'status': 'error', 'message': 'Invalid JSON'}).encode('utf-8'))
+            print("[POST Handler] Received invalid JSON.")
+            response_status = 400
+            response_message = {'status': 'error', 'message': 'Invalid JSON'}
         except Exception as e:
-            print(f"[Electron Listener] Server error handling POST: {e}")
-            self.send_response(500)
+            print(f"[POST Handler - Thread {threading.get_ident()}] Server error handling POST: {e}")
+            response_status = 500
+            response_message = {'status': 'error', 'message': f'Server error: {e}'}
+        finally:
+            # Send HTTP response
+            self.send_response(response_status)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({'status': 'error', 'message': f'Server error: {e}'}).encode('utf-8'))
+            self.wfile.write(json.dumps(response_message).encode('utf-8'))
 
-    # Optional: Handle GET requests for simple health checks
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(f'Electron Listener Node HTTP Server active on port {LISTEN_PORT}.'.encode('utf-8'))
-
-    # Optional: Suppress or customize request logs
     def log_message(self, format, *args):
-        # Comment out to keep console clean, or customize log format
-        # print(f"[HTTP Log] {self.address_string()} - {format % args}")
+        # Keep console cleaner
+        print(f"[HTTP Log] {self.address_string()} - {format % args}")
         pass
 
 # --- Check if port is in use ---
@@ -127,6 +266,11 @@ def is_port_in_use(port):
             else:
                 raise # Other errors need to be raised
         return False
+
+# --- Define ThreadingHTTPServer ---
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread."""
+    daemon_threads = True # Ensure threads exit when main process exits
 
 # --- Function to start the HTTP server ---
 def start_http_server(host, port):
@@ -146,18 +290,19 @@ def start_http_server(host, port):
 
     try:
         server_address = (host, port)
-        server_instance = HTTPServer(server_address, SimpleHTTPRequestHandler)
-        print(f"[Electron Listener] Starting HTTP server on {host}:{port}...")
+        # Use the combined handler
+        server_instance = ThreadingHTTPServer(server_address, SimpleHTTPRequestHandler)
+        print(f"[Electron Listener] Starting Threading HTTP server on {host}:{port}...")
 
         # Run server in background thread
         # daemon=True ensures this thread exits when the ComfyUI main process exits
         server_thread = threading.Thread(target=server_instance.serve_forever, daemon=True)
         server_thread.start()
         server_started_flag = True # Mark server as successfully started
-        print(f"[Electron Listener] HTTP server started successfully on port {port}.")
+        print(f"[Electron Listener] Threading HTTP server started successfully on port {port}. SSE at /events")
 
     except Exception as e:
-        print(f"[Electron Listener] Failed to start HTTP server on port {port}: {e}")
+        print(f"[Electron Listener] Failed to start Threading HTTP server on port {port}: {e}")
         server_instance = None
         server_thread = None
         server_started_flag = False # Mark server start as failed
