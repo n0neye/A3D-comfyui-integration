@@ -386,8 +386,7 @@ def base64_to_tensor(base64_str):
 # --- ComfyUI Node Class ---
 class ElectronHttpListenerNode:
     _server_started = False
-    # _last_processed_timestamp = 0.0 # IS_CHANGED logic might need review if using timestamp
-
+    
     def __init__(self):
         # Use class-level flag to ensure start_http_server is only called once
         # This typically happens when ComfyUI loads the node
@@ -399,41 +398,36 @@ class ElectronHttpListenerNode:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {}, # Usually no input needed, passively receives
+            "required": {}, 
             "optional": {
-                # Add optional trigger for convenience in manually refreshing
                 "trigger": ("*", {"forceInput": True}),
             }
         }
-
-    # Force the node to refresh every time the user runs a queue
+    
     @classmethod
     def IS_CHANGED(cls, trigger):
-        # Always trigger execution for simplicity with external updates for now
-        # Timestamp logic can be added back if needed for optimization
         return float("nan")
-
+    
     # --- Updated Return Types and Names ---
-    RETURN_TYPES = ("STRING", "FLOAT", "IMAGE", "IMAGE", "IMAGE", "IMAGE")
-    RETURN_NAMES = ("received_data_json", "timestamp", "image", "color_image", "depth_image", "openpose_image")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "STRING", "STRING", "INT")
+    RETURN_NAMES = ("color_image", "depth_image", "openpose_image", "prompt", "negative_prompt", "seed")
     # ---
     FUNCTION = "get_latest_data"
     CATEGORY = "Utils/Listeners"
-    OUTPUT_NODE = True # Keep True for the JS preview widget
+    OUTPUT_NODE = True
     
     def get_latest_data(self, trigger=None):
         global latest_received_data, data_lock, server_started_flag
-
+        
         # Create a default empty tensor for missing images
         empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
-
+        
         if not server_started_flag:
             print("[Node Execute] Warning: HTTP Server is not running.", flush=True)
             error_msg = {"error": "HTTP server not running", "details": f"Check port {LISTEN_PORT}."}
-            return (json.dumps(error_msg), 0.0, empty_image, empty_image, empty_image, empty_image)
-
-        current_payload = None
-        current_timestamp = 0.0
+            # Return empty values for all outputs
+            return (empty_image, empty_image, empty_image, "", "", 0)
+        
         # --- Variables for tensors and metadata ---
         color_tensor = None
         depth_tensor = None
@@ -442,52 +436,42 @@ class ElectronHttpListenerNode:
         negative_prompt_value = None
         seed_value = None
         # ---
-
+        
         with data_lock:
             # Get data stored by the last POST request
-            current_payload = latest_received_data["payload"]
             current_timestamp = latest_received_data["timestamp"]
             # Get base64 strings and metadata
             color_b64 = latest_received_data["color_image_base64"]
             depth_b64 = latest_received_data["depth_image_base64"]
             op_b64 = latest_received_data["openpose_image_base64"]
-            prompt_value = latest_received_data["prompt"]
-            negative_prompt_value = latest_received_data["negative_prompt"]
-            seed_value = latest_received_data["seed"]
-
+            prompt_value = latest_received_data["prompt"] or ""  # Default to empty string
+            negative_prompt_value = latest_received_data["negative_prompt"] or ""  # Default to empty string
+            seed_value = latest_received_data["seed"] or 0  # Default to 0
+        
         print(f"[Node Execute] Executing. Processing data from timestamp: {current_timestamp}", flush=True)
-
+        
         # --- Convert base64 to Tensors ---
         color_tensor = base64_to_tensor(color_b64)
         depth_tensor = base64_to_tensor(depth_b64)
         openpose_tensor = base64_to_tensor(op_b64)
         # ---
-
+        
         # Use empty tensor if conversion failed or data was None
         color_tensor = color_tensor if color_tensor is not None else empty_image
         depth_tensor = depth_tensor if depth_tensor is not None else empty_image
         openpose_tensor = openpose_tensor if openpose_tensor is not None else empty_image
-
-        # Prepare payload to return
-        payload_to_return = current_payload if current_payload is not None else {}
-        # Optionally remove large base64 strings from the JSON output if they exist
-        if isinstance(payload_to_return, dict):
-             payload_to_return.pop("image_base64", None)
-             payload_to_return.pop("color_image_base64", None)
-             payload_to_return.pop("depth_image_base64", None)
-             payload_to_return.pop("openpose_image_base64", None)
         
-        # Add metadata to returned JSON
-        enhanced_payload = {
-            "original_payload": payload_to_return,
-            "prompt": prompt_value,
-            "negative_prompt": negative_prompt_value,
-            "seed": seed_value
-        }
-        json_output = json.dumps(enhanced_payload)
-
-        print("[Node Execute] Returning JSON, timestamp, and image tensors with metadata.", flush=True)
-        return (json_output, current_timestamp, color_tensor, color_tensor, depth_tensor, openpose_tensor)
+        # Convert seed to integer if present
+        if isinstance(seed_value, (float, str)):
+            try:
+                seed_value = int(seed_value)
+            except (ValueError, TypeError):
+                seed_value = 0
+        elif seed_value is None:
+            seed_value = 0
+        
+        print("[Node Execute] Returning image tensors and metadata.", flush=True)
+        return (color_tensor, depth_tensor, openpose_tensor, prompt_value, negative_prompt_value, seed_value)
 
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation
