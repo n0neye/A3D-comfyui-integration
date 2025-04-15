@@ -20,10 +20,13 @@ import queue # Using queue for thread-safe message passing to SSE clients
 latest_received_data = {
     "payload": None,
     "timestamp": 0,
-    "image_base64": None, # Main image for node output processing
-    "color_image_base64": None,
+    "color_image_base64": None,  # Now as main image
     "depth_image_base64": None,
     "openpose_image_base64": None,
+    # Add metadata fields
+    "prompt": None,
+    "negative_prompt": None,
+    "seed": None,
 }
 data_lock = threading.Lock()
 server_instance = None
@@ -158,11 +161,13 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         response_status = 500
         response_message = {'status': 'error', 'message': 'Internal server error'}
         received_payload = None
-        # --- Variables to hold base64 data found in this request ---
-        main_image_b64 = None
+        # --- Variables to hold base64 data and metadata found in this request ---
         color_image_b64 = None
         depth_image_b64 = None
         openpose_image_b64 = None
+        prompt = None
+        negative_prompt = None
+        seed = None
         # ---
 
         print(f"[POST Handler - Thread {threading.get_ident()}] Received POST request with content type: {content_type}")
@@ -185,55 +190,77 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
                 # --- Extract base64 images from JSON ---
                 if isinstance(parsed_data, dict):
-                    main_image_b64 = parsed_data.get("image_base64")
-                    color_image_b64 = parsed_data.get("color_image_base64")
+                    # Compatible with frontend format: image_base64 as main image field (color image)
+                    color_image_b64 = parsed_data.get("image_base64") or parsed_data.get("color_image_base64")
                     depth_image_b64 = parsed_data.get("depth_image_base64")
                     openpose_image_b64 = parsed_data.get("openpose_image_base64")
-
-                    count = sum(1 for img in [main_image_b64, color_image_b64, depth_image_b64, openpose_image_b64] if img)
+                    
+                    # Extract extra fields from metadata
+                    metadata = parsed_data.get("metadata", {})
+                    if isinstance(metadata, dict):
+                        prompt = metadata.get("prompt")
+                        negative_prompt = metadata.get("negative_prompt")
+                        seed = metadata.get("seed")
+                        # Also try to find these values at the top level
+                        if prompt is None:
+                            prompt = parsed_data.get("prompt")
+                        if negative_prompt is None:
+                            negative_prompt = parsed_data.get("negative_prompt")
+                        if seed is None:
+                            seed = parsed_data.get("seed")
+                    
+                    print(f"[POST Handler] Found prompt: {prompt is not None}")
+                    print(f"[POST Handler] Found negative_prompt: {negative_prompt is not None}")
+                    print(f"[POST Handler] Found seed: {seed}")
+                    
+                    count = sum(1 for img in [color_image_b64, depth_image_b64, openpose_image_b64] if img)
                     print(f"[POST Handler] Found {count} base64 image(s) in JSON for processing.")
                     # ---
 
             else:
-                print(f"[POST Handler] Received non-JSON content type: {content_type}. Treating as main image if possible.")
+                print(f"[POST Handler] Received non-JSON content type: {content_type}. Treating as color image if possible.")
                 try:
                     # Assume it might be image data, try encoding to base64
-                    main_image_b64 = base64.b64encode(body).decode('utf-8')
+                    color_image_b64 = base64.b64encode(body).decode('utf-8')
                     # Add data URI prefix based on content type if it's an image type
                     if content_type.startswith('image/'):
-                         main_image_b64 = f"data:{content_type};base64,{main_image_b64}"
-                    print("[POST Handler] Encoded non-JSON body to base64.")
+                         color_image_b64 = f"data:{content_type};base64,{color_image_b64}"
+                    print("[POST Handler] Encoded non-JSON body to base64 as color image.")
                     received_payload = {"type": "binary_data", "content_type": content_type}
                 except Exception as enc_e:
                      print(f"[POST Handler] Could not encode non-JSON body: {enc_e}")
                      received_payload = {"type": "unknown", "content_type": content_type}
 
 
-            # --- Update shared state (including optional images) ---
+            # --- Update shared state (including optional images and metadata) ---
             with data_lock:
                 latest_received_data["payload"] = received_payload
                 latest_received_data["timestamp"] = current_timestamp
-                # Store base64 data separately for node processing and SSE
-                latest_received_data["image_base64"] = main_image_b64
+                # Store base64 data and metadata separately for node processing and SSE
                 latest_received_data["color_image_base64"] = color_image_b64
                 latest_received_data["depth_image_base64"] = depth_image_b64
                 latest_received_data["openpose_image_base64"] = openpose_image_b64
+                latest_received_data["prompt"] = prompt
+                latest_received_data["negative_prompt"] = negative_prompt
+                latest_received_data["seed"] = seed
                 print("[POST Handler] Updated latest_received_data for node and SSE.")
             # ---
 
             # --- Push message to SSE Queue ---
-            # Send all available images in one message
+            # Send all available images and metadata in one message
             sse_payload = {
-                "type": "new_images", # Changed type slightly
+                "type": "new_images",
                 "timestamp": current_timestamp,
-                "image_base64": main_image_b64,
                 "color_image_base64": color_image_b64,
                 "depth_image_base64": depth_image_b64,
                 "openpose_image_base64": openpose_image_b64,
+                "prompt": prompt,
+                "negative_prompt": negative_prompt, 
+                "seed": seed,
                 "payload": received_payload # Also include original payload if needed by JS
             }
             sse_message_queue.put(sse_payload)
-            print("[POST Handler] Image data pushed to SSE queue.")
+            print("[POST Handler] Image data and metadata pushed to SSE queue.")
             # ---
 
             response_status = 200
@@ -407,40 +434,41 @@ class ElectronHttpListenerNode:
 
         current_payload = None
         current_timestamp = 0.0
-        # --- Variables for tensors ---
-        main_tensor = None
+        # --- Variables for tensors and metadata ---
         color_tensor = None
         depth_tensor = None
         openpose_tensor = None
+        prompt_value = None
+        negative_prompt_value = None
+        seed_value = None
         # ---
 
         with data_lock:
             # Get data stored by the last POST request
             current_payload = latest_received_data["payload"]
             current_timestamp = latest_received_data["timestamp"]
-            # Get base64 strings
-            main_b64 = latest_received_data["image_base64"]
+            # Get base64 strings and metadata
             color_b64 = latest_received_data["color_image_base64"]
             depth_b64 = latest_received_data["depth_image_base64"]
             op_b64 = latest_received_data["openpose_image_base64"]
-            # Update last processed timestamp if using IS_CHANGED logic
-            # ElectronHttpListenerNode._last_processed_timestamp = current_timestamp
+            prompt_value = latest_received_data["prompt"]
+            negative_prompt_value = latest_received_data["negative_prompt"]
+            seed_value = latest_received_data["seed"]
 
         print(f"[Node Execute] Executing. Processing data from timestamp: {current_timestamp}", flush=True)
 
         # --- Convert base64 to Tensors ---
-        main_tensor = base64_to_tensor(main_b64)
         color_tensor = base64_to_tensor(color_b64)
         depth_tensor = base64_to_tensor(depth_b64)
         openpose_tensor = base64_to_tensor(op_b64)
         # ---
 
         # Use empty tensor if conversion failed or data was None
-        main_tensor = main_tensor if main_tensor is not None else empty_image
         color_tensor = color_tensor if color_tensor is not None else empty_image
         depth_tensor = depth_tensor if depth_tensor is not None else empty_image
         openpose_tensor = openpose_tensor if openpose_tensor is not None else empty_image
 
+        # Prepare payload to return
         payload_to_return = current_payload if current_payload is not None else {}
         # Optionally remove large base64 strings from the JSON output if they exist
         if isinstance(payload_to_return, dict):
@@ -448,10 +476,18 @@ class ElectronHttpListenerNode:
              payload_to_return.pop("color_image_base64", None)
              payload_to_return.pop("depth_image_base64", None)
              payload_to_return.pop("openpose_image_base64", None)
-        json_output = json.dumps(payload_to_return)
+        
+        # Add metadata to returned JSON
+        enhanced_payload = {
+            "original_payload": payload_to_return,
+            "prompt": prompt_value,
+            "negative_prompt": negative_prompt_value,
+            "seed": seed_value
+        }
+        json_output = json.dumps(enhanced_payload)
 
-        print("[Node Execute] Returning JSON, timestamp, and 4 image tensors.", flush=True)
-        return (json_output, current_timestamp, main_tensor, color_tensor, depth_tensor, openpose_tensor)
+        print("[Node Execute] Returning JSON, timestamp, and image tensors with metadata.", flush=True)
+        return (json_output, current_timestamp, color_tensor, color_tensor, depth_tensor, openpose_tensor)
 
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation

@@ -9,7 +9,7 @@ let sseSource = null;
 let sseRetryTimeout = null; // To handle reconnection attempts
 
 // --- Function to update the image previews in a specific node ---
-function updateNodeImagePreviews(node, messageData) { // Renamed, takes full message
+function updateNodeImagePreviews(node, messageData) {
     if (!node || !messageData) return;
     console.log(`[Electron Listener JS] Updating previews for node: ${node.title} (ID: ${node.id})`);
 
@@ -94,114 +94,160 @@ function updateNodeImagePreviews(node, messageData) { // Renamed, takes full mes
         }
     };
 
+    // Add a new function to update the metadata div
+    const updateMetadataDiv = (divElement, metadata) => {
+        if (!divElement) return;
+        
+        // Get metadata values
+        const prompt = metadata.prompt;
+        const negPrompt = metadata.negative_prompt;
+        const seed = metadata.seed;
+        
+        // Create formatted metadata text
+        let metadataText = '';
+        if (prompt) {
+            metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
+        }
+        if (negPrompt) {
+            metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
+        }
+        if (seed !== null && seed !== undefined) {
+            metadataText += `<strong>Seed:</strong> ${seed}`;
+        }
+        
+        // If no metadata, display placeholder text
+        if (!metadataText) {
+            metadataText = "No metadata available";
+        }
+        
+        // Update div content
+        divElement.innerHTML = metadataText;
+    };
+
     // Update backgrounds for all divs
     console.log("[Electron Listener JS] Updating preview backgrounds...");
-    updateDivBackground(containerWidget.elements.main, messageData.image_base64, "Waiting...");
-    updateDivBackground(containerWidget.elements.color, messageData.color_image_base64, "Color N/A");
+    updateDivBackground(containerWidget.elements.main, messageData.color_image_base64, "Waiting...");
     updateDivBackground(containerWidget.elements.depth, messageData.depth_image_base64, "Depth N/A");
     updateDivBackground(containerWidget.elements.openpose, messageData.openpose_image_base64, "Pose N/A");
+    
+    // Update metadata div
+    updateMetadataDiv(containerWidget.elements.metadata, messageData);
 
     // Request redraw after attempting updates (might be redundant if resize happens)
     node.setDirtyCanvas(true, true);
 }
 
-// --- Function to add the preview widgets (container with 4 divs) ---
-function addPreviewWidgets(node) { // Renamed
-     let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
-     if (!containerWidget) {
-         console.log("[Electron Listener JS] Adding preview container widget for node:", node.id);
+// --- Function to add the preview widgets (container with divs) ---
+function addPreviewWidgets(node) {
+    let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
+    if (!containerWidget) {
+        console.log("[Electron Listener JS] Adding preview container widget for node:", node.id);
 
-         // --- Create Container ---
-         const containerDiv = document.createElement("div");
-         containerDiv.className = "electron-http-preview-container";
-         containerDiv.style.width = "100%";
-         containerDiv.style.display = "flex";
-         containerDiv.style.flexDirection = "column"; // Stack main and row
-         containerDiv.style.gap = "4px"; // Space between main and row
+        // --- Create Container ---
+        const containerDiv = document.createElement("div");
+        containerDiv.className = "electron-http-preview-container";
+        containerDiv.style.width = "100%";
+        containerDiv.style.display = "flex";
+        containerDiv.style.flexDirection = "column";
+        containerDiv.style.gap = "4px";
 
-         // --- Create Main Preview Div ---
-         const mainDiv = document.createElement("div");
-         mainDiv.className = "electron-http-preview-main";
-         mainDiv.style.width = "100%";
-         mainDiv.style.height = "200px"; // Initial height for main
-         mainDiv.style.backgroundColor = "#222";
-         mainDiv.style.color = "#888";
-         mainDiv.style.textAlign = "center";
-         mainDiv.style.lineHeight = "200px";
-         mainDiv.style.fontSize = "14px";
-         mainDiv.textContent = "Waiting...";
-         mainDiv.style.backgroundSize = "contain";
-         mainDiv.style.backgroundPosition = "center";
-         mainDiv.style.backgroundRepeat = "no-repeat";
-         containerDiv.appendChild(mainDiv);
+        // --- Create Main Preview Div ---
+        const mainDiv = document.createElement("div");
+        mainDiv.className = "electron-http-preview-main";
+        mainDiv.style.width = "100%";
+        mainDiv.style.height = "200px";
+        mainDiv.style.backgroundColor = "#222";
+        mainDiv.style.color = "#888";
+        mainDiv.style.textAlign = "center";
+        mainDiv.style.lineHeight = "200px";
+        mainDiv.style.fontSize = "14px";
+        mainDiv.textContent = "Waiting...";
+        mainDiv.style.backgroundSize = "contain";
+        mainDiv.style.backgroundPosition = "center";
+        mainDiv.style.backgroundRepeat = "no-repeat";
+        containerDiv.appendChild(mainDiv);
 
-         // --- Create Row for Optional Previews ---
-         const optionalRowDiv = document.createElement("div");
-         optionalRowDiv.className = "electron-http-preview-optional-row";
-         optionalRowDiv.style.width = "100%";
-         optionalRowDiv.style.display = "flex";
-         optionalRowDiv.style.gap = "4px"; // Space between optional previews
-         optionalRowDiv.style.height = "80px"; // Height for the row
-         containerDiv.appendChild(optionalRowDiv);
+        // --- Create Metadata Div ---
+        const metadataDiv = document.createElement("div");
+        metadataDiv.className = "electron-http-preview-metadata";
+        metadataDiv.style.width = "100%";
+        metadataDiv.style.padding = "8px";
+        metadataDiv.style.backgroundColor = "#333";
+        metadataDiv.style.color = "#ccc";
+        metadataDiv.style.fontSize = "12px";
+        metadataDiv.style.maxHeight = "80px";
+        metadataDiv.style.overflowY = "auto";
+        metadataDiv.innerHTML = "No metadata available";
+        containerDiv.appendChild(metadataDiv);
 
-         // --- Create Optional Preview Divs ---
-         const createOptionalDiv = (text) => {
-             const div = document.createElement("div");
-             div.style.flex = "1"; // Share space equally
-             div.style.height = "100%";
-             div.style.backgroundColor = "#2a2a2a";
-             div.style.color = "#777";
-             div.style.textAlign = "center";
-             div.style.lineHeight = "80px";
-             div.style.fontSize = "12px";
-             div.textContent = text;
-             div.style.backgroundSize = "contain";
-             div.style.backgroundPosition = "center";
-             div.style.backgroundRepeat = "no-repeat";
-             optionalRowDiv.appendChild(div);
-             return div;
-         };
-         const colorDiv = createOptionalDiv("Color");
-         const depthDiv = createOptionalDiv("Depth");
-         const openposeDiv = createOptionalDiv("Pose");
-         // ---
+        // --- Create Optional Images Row ---
+        const optionalRowDiv = document.createElement("div");
+        optionalRowDiv.className = "electron-http-preview-row";
+        optionalRowDiv.style.display = "flex";
+        optionalRowDiv.style.width = "100%";
+        optionalRowDiv.style.height = "80px";
+        optionalRowDiv.style.gap = "4px";
+        containerDiv.appendChild(optionalRowDiv);
 
-         try {
-             containerWidget = node.addDOMWidget("http_preview_container", "div", containerDiv, {
-                 serialize: false, hideOnZoom: false,
-             });
-             // Store references to the inner divs on the widget object
-             containerWidget.elements = {
-                 main: mainDiv,
-                 color: colorDiv,
-                 depth: depthDiv,
-                 openpose: openposeDiv
-             };
+        // Create optional divs with helper function
+        const createOptionalDiv = (label) => {
+            const div = document.createElement("div");
+            div.className = `electron-http-preview-${label.toLowerCase()}`;
+            div.style.flex = "1";
+            div.style.height = "100%";
+            div.style.backgroundColor = "#222";
+            div.style.color = "#888";
+            div.style.textAlign = "center";
+            div.style.lineHeight = "80px";
+            div.style.fontSize = "12px";
+            div.textContent = label;
+            div.style.backgroundSize = "contain";
+            div.style.backgroundPosition = "center";
+            div.style.backgroundRepeat = "no-repeat";
+            optionalRowDiv.appendChild(div);
+            return div;
+        };
+        
+        // Only create depth and pose divs
+        const depthDiv = createOptionalDiv("Depth");
+        const openposeDiv = createOptionalDiv("Pose");
 
-             // Compute size based on the container layout
-             containerWidget.computeSize = function(width) {
-                 let mainHeight = 200; // Default
-                 let rowHeight = 80; // Default
-                 if (this.elements?.main?.style.height?.endsWith('px')) {
-                     mainHeight = parseInt(this.elements.main.style.height, 10);
-                 }
-                  if (this.elements?.color?.style.height?.endsWith('px')) { // Use one of the row divs
-                     rowHeight = parseInt(this.elements.color.style.height, 10);
-                 }
-                 const totalHeight = mainHeight + rowHeight + 12; // Add gap + padding
-                 // console.log(`[ComputeSize - Container] Node: ${node.id}, Width: ${width}, Returning H: ${totalHeight}`);
-                 return [width, totalHeight];
-             };
+        try {
+            containerWidget = node.addDOMWidget("http_preview_container", "div", containerDiv, {
+                serialize: false, hideOnZoom: false,
+            });
+            // Store references to inner divs for later updates
+            containerWidget.elements = {
+                main: mainDiv,           // This is now the color image
+                metadata: metadataDiv,   // New metadata div
+                depth: depthDiv,
+                openpose: openposeDiv
+            };
 
-             // Set initial node size based on default widget heights
-             node.setSize(containerWidget.computeSize(node.size[0]));
-             console.log("[Electron Listener JS] Successfully added preview container widget.");
+            // Compute size based on container layout
+            containerWidget.computeSize = function(width) {
+                let mainHeight = 200; // Default
+                let metadataHeight = 80; // Metadata area height
+                let rowHeight = 80; // Default
+                if (this.elements?.main?.style.height?.endsWith('px')) {
+                    mainHeight = parseInt(this.elements.main.style.height, 10);
+                }
+                if (this.elements?.depth?.style.height?.endsWith('px')) {
+                    rowHeight = parseInt(this.elements.depth.style.height, 10);
+                }
+                const totalHeight = mainHeight + metadataHeight + rowHeight + 16; // Add gap + padding
+                return [width, totalHeight];
+            };
 
-         } catch (e) {
-             console.error("[Electron Listener JS] Error adding preview container widget:", e);
-         }
-     }
-     return containerWidget;
+            // Set initial node size
+            node.setSize(containerWidget.computeSize(node.size[0]));
+            console.log("[Electron Listener JS] Successfully added preview container widget.");
+
+        } catch (e) {
+            console.error("[Electron Listener JS] Error adding preview container widget:", e);
+        }
+    }
+    return containerWidget;
 }
 
 // --- Function to connect to SSE endpoint ---
