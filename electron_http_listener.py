@@ -165,18 +165,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             current_timestamp = time.time()
 
             # Process based on content type
-            if content_type.startswith('image/'):
-                print(f"[POST Handler] Received direct image data ({content_type}).")
-                # Store payload info (without raw data for latest_received_data)
-                received_payload = {
-                    "type": "image_direct",
-                    "content_type": content_type,
-                    "size": len(body)
-                }
-                # Generate base64 for SSE push
-                image_base64_for_sse = base64.b64encode(body).decode('utf-8')
-
-            elif content_type.startswith('application/json'):
+            if content_type.startswith('application/json'):
                 print("[POST Handler] Received JSON data.")
                 data_string = body.decode('utf-8')
                 parsed_data = json.loads(data_string)
@@ -367,15 +356,8 @@ class ElectronHttpListenerNode:
                 try:
                     img = None # Initialize img variable
 
-                    # Check if it's direct image data
-                    if isinstance(current_payload, dict) and current_payload.get("type") == "image":
-                        image_data = current_payload.get("image_data")
-                        if image_data:
-                            print("[Electron Listener Node] Processing direct image data...", flush=True)
-                            img = Image.open(BytesIO(image_data)).convert('RGB')
-
                     # Check if JSON contains base64 encoded image
-                    elif isinstance(current_payload, dict) and "image_base64" in current_payload:
+                    if isinstance(current_payload, dict) and "image_base64" in current_payload:
                         base64_data = current_payload["image_base64"]
                         if isinstance(base64_data, str):
                             print("[Electron Listener Node] Processing base64 image data...", flush=True)
