@@ -27,27 +27,25 @@ function updateNodeImagePreview(node, base64Data, contentType) {
         img.title = "Preview from HTTP Listener (via SSE)";
 
         try {
-            // Add the DOM widget
-            imgWidget = node.addDOMWidget("http_preview_image", "img", img, {
-                 // No options needed typically
-            });
-            imgWidget.element = img; // Store reference
-
-            // Define computeSize for the widget
+            imgWidget = node.addDOMWidget("http_preview_image", "img", img, {});
+            imgWidget.element = img;
             imgWidget.computeSize = function(width) {
+                // Add logging inside computeSize
                 if (this.element?.naturalWidth && this.element?.naturalHeight) {
                     const ratio = this.element.naturalHeight / this.element.naturalWidth;
                     const height = width * ratio;
                     const computedHeight = Math.min(height, 256);
+                    // console.log(`[ComputeSize] Node: ${node.id}, Width: ${width}, Natural H: ${this.element.naturalHeight}, Natural W: ${this.element.naturalWidth}, Computed H: ${computedHeight}`);
                     return [width, computedHeight + 4];
                 }
-                return [width, 100]; // Default size
-            }
+                 // console.log(`[ComputeSize] Node: ${node.id}, Defaulting size [${width}, 100]`);
+                return [width, 100];
+            };
             console.log("[Electron Listener JS] Successfully added DOM widget.");
-            node.setSize(node.computeSize()); // Trigger resize
+            node.setSize(node.computeSize());
         } catch (e) {
             console.error("[Electron Listener JS] Error adding DOM widget:", e);
-            return; // Stop if widget creation failed
+            return;
         }
     } else {
          console.log("[Electron Listener JS] Found existing image widget.");
@@ -55,23 +53,49 @@ function updateNodeImagePreview(node, base64Data, contentType) {
 
     // Update the image source using Data URI
     if (imgWidget && imgWidget.element) {
-        // Determine the correct mime type for the data URI
-        let mimeType = "image/jpeg"; // Default
+        let mimeType = "image/jpeg";
         if (contentType && contentType.startsWith('image/')) {
             mimeType = contentType;
         } else if (base64Data.startsWith('data:image/')) {
-             // If the base64 data already includes the prefix, use it directly
-             mimeType = ''; // Prevent double prefix
+             mimeType = '';
         }
-
         const dataUri = mimeType ? `data:${mimeType};base64,${base64Data}` : base64Data;
 
         console.log(`[Electron Listener JS] Setting image source (Data URI, length: ${dataUri.length})`);
-        imgWidget.element.src = dataUri;
+        imgWidget.element.src = dataUri; // Set the source
+
         imgWidget.element.onload = () => {
-            console.log("[Electron Listener JS] Image loaded successfully via SSE. Requesting redraw.");
-            node.setDirtyCanvas(true, true); // Request redraw
+            console.log("[Electron Listener JS] Image loaded successfully via SSE.");
+            const w = imgWidget.element.naturalWidth;
+            const h = imgWidget.element.naturalHeight;
+            const clientW = imgWidget.element.clientWidth;
+            const clientH = imgWidget.element.clientHeight;
+            // Log dimensions *before* potential resize/redraw
+            console.log(`[Electron Listener JS] Image dimensions (before resize attempt): natural=${w}x${h}, client=${clientW}x${clientH}`);
+
+            // --- Delay resize and redraw using requestAnimationFrame ---
+            requestAnimationFrame(() => {
+                try {
+                    // Recalculate the node size based on the now-loaded image dimensions
+                    const newSize = node.computeSize();
+                    console.log(`[Electron Listener JS] Computed new node size: [${newSize[0]}, ${newSize[1]}]`);
+                    node.setSize(newSize);
+
+                    // Log dimensions *after* setSize attempt
+                    const postClientW = imgWidget.element.clientWidth;
+                    const postClientH = imgWidget.element.clientHeight;
+                    console.log(`[Electron Listener JS] Image dimensions (after setSize): client=${postClientW}x${postClientH}`);
+
+                    // Request redraw *after* setting the size
+                    node.setDirtyCanvas(true, true);
+                    console.log("[Electron Listener JS] Requested redraw inside requestAnimationFrame.");
+                } catch (e) {
+                     console.error("[Electron Listener JS] Error during delayed resize/redraw:", e);
+                }
+            });
+            // --- End of delayed logic ---
         }
+
         imgWidget.element.onerror = () => {
             console.error("[Electron Listener JS] Error loading image from Data URI.");
             imgWidget.element.alt = "Error loading preview";
@@ -207,11 +231,12 @@ app.registerExtension({
                      img.style.width = "100%";
                      img.style.objectFit = "contain";
                      img.style.maxHeight = "256px";
+                     img.style.minHeight = "256px";
                      img.style.display = "block";
                      img.alt = "Waiting for preview...";
                      img.title = "Preview from HTTP Listener (via SSE)";
                      // Set a default small size or placeholder image?
-                     // img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; // Transparent pixel
+                    //  img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; // Transparent pixel
 
                      try {
                          imgWidget = this.addDOMWidget("http_preview_image", "img", img, {});
