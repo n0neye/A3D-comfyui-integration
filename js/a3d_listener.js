@@ -96,32 +96,32 @@ function updateNodeImagePreviews(node, messageData) {
 
     // Add a new function to update the metadata div
     const updateMetadataDiv = (divElement, metadata) => {
-        if (!divElement) return;
+        // if (!divElement) return;
         
-        // Get metadata values
-        const prompt = metadata.prompt;
-        const negPrompt = metadata.negative_prompt;
-        const seed = metadata.seed;
+        // // Get metadata values
+        // const prompt = metadata.prompt;
+        // const negPrompt = metadata.negative_prompt;
+        // const seed = metadata.seed;
         
-        // Create formatted metadata text
-        let metadataText = '';
-        if (prompt) {
-            metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
-        }
-        if (negPrompt) {
-            metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
-        }
-        if (seed !== null && seed !== undefined) {
-            metadataText += `<strong>Seed:</strong> ${seed}`;
-        }
+        // // Create formatted metadata text
+        // let metadataText = '';
+        // if (prompt) {
+        //     metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
+        // }
+        // if (negPrompt) {
+        //     metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
+        // }
+        // if (seed !== null && seed !== undefined) {
+        //     metadataText += `<strong>Seed:</strong> ${seed}`;
+        // }
         
-        // If no metadata, display placeholder text
-        if (!metadataText) {
-            metadataText = "No metadata available";
-        }
+        // // If no metadata, display placeholder text
+        // if (!metadataText) {
+        //     metadataText = "No metadata available";
+        // }
         
-        // Update div content
-        divElement.innerHTML = metadataText;
+        // // Update div content
+        // divElement.innerHTML = metadataText;
     };
 
     // Update backgrounds for all divs
@@ -167,6 +167,16 @@ function addPreviewWidgets(node) {
         mainDiv.style.backgroundRepeat = "no-repeat";
         containerDiv.appendChild(mainDiv);
 
+
+        // --- Create Optional Images Row ---
+        const optionalRowDiv = document.createElement("div");
+        optionalRowDiv.className = "A3D-http-preview-row";
+        optionalRowDiv.style.display = "flex";
+        optionalRowDiv.style.width = "100%";
+        optionalRowDiv.style.height = "80px";
+        optionalRowDiv.style.gap = "4px";
+        containerDiv.appendChild(optionalRowDiv);
+
         // --- Create Metadata Div ---
         const metadataDiv = document.createElement("div");
         metadataDiv.className = "A3D-http-preview-metadata";
@@ -177,17 +187,8 @@ function addPreviewWidgets(node) {
         metadataDiv.style.fontSize = "12px";
         metadataDiv.style.maxHeight = "80px";
         metadataDiv.style.overflowY = "auto";
-        metadataDiv.innerHTML = "No metadata available";
+        metadataDiv.innerHTML = "";
         containerDiv.appendChild(metadataDiv);
-
-        // --- Create Optional Images Row ---
-        const optionalRowDiv = document.createElement("div");
-        optionalRowDiv.className = "A3D-http-preview-row";
-        optionalRowDiv.style.display = "flex";
-        optionalRowDiv.style.width = "100%";
-        optionalRowDiv.style.height = "80px";
-        optionalRowDiv.style.gap = "4px";
-        containerDiv.appendChild(optionalRowDiv);
 
         // Create optional divs with helper function
         const createOptionalDiv = (label) => {
