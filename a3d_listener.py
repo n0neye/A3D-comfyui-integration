@@ -32,19 +32,10 @@ latest_received_data = {
     "seed": None,
 }
 data_lock = threading.Lock()
-server_instance = None
-server_thread = None
-server_started_flag = False  # Flag to mark whether the server has started successfully
 # --- SSE Specific Globals ---
 sse_clients = {}  # Dictionary to store client connections
 sse_clients_lock = threading.Lock()
 sse_message_queue = queue.Queue()  # Queue for message passing
-
-# --- Configuration ---
-DEFAULT_PORT = 8199 # Choose a port (avoid commonly used ports like 8188)
-# Try to get port from environment variable for flexibility
-LISTEN_PORT = int(os.environ.get('A3D_LISTENER_PORT', DEFAULT_PORT))
-LISTEN_HOST = '0.0.0.0' # Listen on all network interfaces
 
 # Set up the routes
 routes = PromptServer.instance.routes
@@ -344,68 +335,6 @@ class A3DListenerNode:
         
         print("[Node Execute] Returning image tensors and metadata.", flush=True)
         return (color_tensor, depth_tensor, openpose_tensor, prompt_value, negative_prompt_value, seed_value)
-
-# --- Check if port is in use ---
-def is_port_in_use(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            # Try to bind to 127.0.0.1 instead of 0.0.0.0 for checking
-            # Since 0.0.0.0 might succeed even if specific interfaces are occupied
-            s.bind(('127.0.0.1', port))
-        except socket.error as e:
-            if e.errno == 98 or e.errno == 10048: # Address already in use (Linux/Windows)
-                return True
-            else:
-                raise # Other errors need to be raised
-        return False
-
-# --- Define ThreadingHTTPServer ---
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in a separate thread."""
-    daemon_threads = True # Ensure threads exit when main process exits
-
-# --- Function to start the HTTP server ---
-def start_http_server(host, port):
-    global server_instance, server_thread, server_started_flag
-    # Check if server is already running (based on thread object)
-    if server_thread and server_thread.is_alive():
-        print(f"[A3D Listener] Server thread already running on port {port}.")
-        server_started_flag = True # Ensure flag is True
-        return
-
-    # Check if port is already in use by another process
-    if is_port_in_use(port):
-         print(f"[A3D Listener] Error: Port {port} is already in use by another process. Cannot start server.")
-         # If port is in use, we can't assume it's our own old instance, so mark as not started
-         server_started_flag = False
-         return # Don't start server
-
-    try:
-        server_address = (host, port)
-        # Use the combined handler
-        server_instance = ThreadingHTTPServer(server_address, SimpleHTTPRequestHandler)
-        print(f"[A3D Listener] Starting Threading HTTP server on {host}:{port}...")
-
-        # Run server in background thread
-        # daemon=True ensures this thread exits when the ComfyUI main process exits
-        server_thread = threading.Thread(target=server_instance.serve_forever, daemon=True)
-        server_thread.start()
-        server_started_flag = True # Mark server as successfully started
-        print(f"[A3D Listener] Threading HTTP server started successfully on port {port}. SSE at /events")
-
-    except Exception as e:
-        print(f"[A3D Listener] Failed to start Threading HTTP server on port {port}: {e}")
-        server_instance = None
-        server_thread = None
-        server_started_flag = False # Mark server start as failed
-
-# --- Ensure server starts when ComfyUI loads ---
-# Try to start server when module loads, don't wait for node instantiation
-# This is more reliable because ComfyUI might not instantiate all nodes immediately
-if not A3DListenerNode._server_started:
-    print("[A3D Listener Module] Attempting server start on module load...")
-    start_http_server(LISTEN_HOST, LISTEN_PORT)
-    A3DListenerNode._server_started = server_started_flag
 
 # Initialize the SSE processor when the module loads
 print("[A3D Listener Module] Initializing with ComfyUI routes")
