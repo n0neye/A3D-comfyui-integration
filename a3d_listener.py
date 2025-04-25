@@ -270,9 +270,7 @@ class A3DListenerNode:
     def INPUT_TYPES(cls):
         return {
             "required": {}, 
-            "optional": {
-                "trigger": ("*", {"forceInput": True}),
-            }
+            "optional": {}
         }
     
     @classmethod
