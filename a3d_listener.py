@@ -273,6 +273,7 @@ class A3DListenerNode:
             "optional": {}
         }
     
+    # TODO: better way to handle input changes
     @classmethod
     def IS_CHANGED(cls, trigger):
         return float("nan")
