@@ -1,34 +1,26 @@
-# __init__.py in comfyui_electron_listener folder
-
 # Import node class from your node file
-from .electron_http_listener import ElectronHttpListenerNode
+from .a3d_listener import A3DListenerNode
 
 # Define mapping dictionary needed by ComfyUI
 NODE_CLASS_MAPPINGS = {
     # "UniqueNodeName": ClassName
-    "ElectronHttpListener": ElectronHttpListenerNode
+    "A3DListener": A3DListenerNode
 }
 
 # Define node display names in UI
 NODE_DISPLAY_NAME_MAPPINGS = {
     # "UniqueNodeName": "Display Name in UI"
-    "ElectronHttpListener": "Electron HTTP Listener"
+    "A3DListener": "A3D Listener"
 }
 
-# Print a message to console confirming node has loaded (optional, for debugging)
+# Define the web directory for JavaScript files
+WEB_DIRECTORY = "./js"
+# Ensure WEB_DIRECTORY is included in __all__
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
+
+# Print a message to console confirming node has loaded
 print("-----------------------------------------")
-print("### Loading: ComfyUI Electron Listener Node ###")
-# Can print listening port and other info here
-from .electron_http_listener import LISTEN_PORT, server_started_flag
-if server_started_flag:
-    print(f"### - Electron HTTP Listener potentially active on port {LISTEN_PORT} ###")
-else:
-    print(f"### - Electron HTTP Listener failed to start or port {LISTEN_PORT} is busy. ###")
+print("### Loading: ComfyUI A3D Listener Node (with image support & JS UI) ###")
+print("### - A3D Listener active on ComfyUI routes (/a3d_data and /a3d_events) ###")
+print("### - Now supporting image display in node via JS ###")
 print("-----------------------------------------")
-
-
-# Optional: If your node package contains web/javascript files
-# WEB_DIRECTORY = "./web"
-# __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
