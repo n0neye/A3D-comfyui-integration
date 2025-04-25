@@ -252,12 +252,6 @@ function addPreviewWidgets(node) {
 
 // --- Function to connect to SSE endpoint ---
 function connectSSE() {
-    // Clear any existing retry timeout
-    if (sseRetryTimeout) {
-        clearTimeout(sseRetryTimeout);
-        sseRetryTimeout = null;
-    }
-
     // Close existing connection if any
     if (sseSource) {
         console.log("[A3D Listener JS] Closing existing SSE connection.");
@@ -265,16 +259,16 @@ function connectSSE() {
         sseSource = null;
     }
 
-    // --- Construct the correct absolute URL ---
-    // Get the current hostname (e.g., 127.0.0.1 or localhost)
-    const hostname = window.location.hostname;
-    // Define the correct port for our listener server
-    const listenerPort = 8199; // Make sure this matches LISTEN_PORT in Python
-    const sseUrl = `http://${hostname}:${listenerPort}/events`;
-    // --- End of URL construction ---
+    // Clear any existing retry timeout
+    if (sseRetryTimeout) {
+        clearTimeout(sseRetryTimeout);
+        sseRetryTimeout = null;
+    }
 
-
-    console.log(`[A3D Listener JS] Connecting to SSE endpoint: ${sseUrl}`); // Log the correct URL
+    // Use the ComfyUI integrated endpoint
+    const sseUrl = `/a3d_events`;
+    
+    console.log(`[A3D Listener JS] Connecting to SSE endpoint: ${sseUrl}`);
 
     try {
         sseSource = new EventSource(sseUrl);
@@ -352,6 +346,20 @@ function connectSSE() {
     }
 }
 
+// Update the function to send data to the server if needed
+function sendDataToServer(data) {
+    fetch('/a3d_data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => console.log('Success:', data))
+    .catch(error => console.error('Error:', error));
+}
 
 // --- ComfyUI Extension Registration ---
 app.registerExtension({
