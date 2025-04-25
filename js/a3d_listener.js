@@ -1,5 +1,5 @@
 // Add a log at the very top to confirm the script is loaded at all
-console.log("[Electron Listener JS] Script loaded (SSE Version).");
+console.log("[A3D Listener JS] Script loaded (SSE Version).");
 
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js"; // Keep api import for potential future use
@@ -11,18 +11,18 @@ let sseRetryTimeout = null; // To handle reconnection attempts
 // --- Function to update the image previews in a specific node ---
 function updateNodeImagePreviews(node, messageData) {
     if (!node || !messageData) return;
-    console.log(`[Electron Listener JS] Updating previews for node: ${node.title} (ID: ${node.id})`);
+    console.log(`[A3D Listener JS] Updating previews for node: ${node.title} (ID: ${node.id})`);
 
     // Find the main container widget
     let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
 
     if (!containerWidget || !containerWidget.elements) {
-        console.error("[Electron Listener JS] Preview container widget or elements not found for node:", node.id);
+        console.error("[A3D Listener JS] Preview container widget or elements not found for node:", node.id);
         // Attempt to recreate if missing
         addPreviewWidgets(node); // Call the function that creates the widgets
         containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
         if (!containerWidget || !containerWidget.elements) {
-             console.error("[Electron Listener JS] Failed to find/recreate preview container widget for node:", node.id);
+             console.error("[A3D Listener JS] Failed to find/recreate preview container widget for node:", node.id);
              return;
         }
     }
@@ -62,7 +62,7 @@ function updateNodeImagePreviews(node, messageData) {
                             const totalHeight = mainImageHeight + 100; // Add space for other previews + padding
                             const newSize = [currentWidth, totalHeight];
 
-                            console.log(`[Electron Listener JS] Resizing node based on main image: [${newSize[0]}, ${newSize[1]}]`);
+                            console.log(`[A3D Listener JS] Resizing node based on main image: [${newSize[0]}, ${newSize[1]}]`);
                             node.setSize(newSize);
                             node.setDirtyCanvas(true, true);
                         } catch(e) { console.error("Error resizing node:", e); }
@@ -72,7 +72,7 @@ function updateNodeImagePreviews(node, messageData) {
 
             };
             img.onerror = () => {
-                console.error("[Electron Listener JS] Error loading base64 data for background.");
+                console.error("[A3D Listener JS] Error loading base64 data for background.");
                 divElement.style.backgroundImage = 'none';
                 divElement.textContent = 'Error';
                 divElement.title = 'Error loading image';
@@ -125,7 +125,7 @@ function updateNodeImagePreviews(node, messageData) {
     };
 
     // Update backgrounds for all divs
-    console.log("[Electron Listener JS] Updating preview backgrounds...");
+    console.log("[A3D Listener JS] Updating preview backgrounds...");
     updateDivBackground(containerWidget.elements.main, messageData.color_image_base64, "Waiting...");
     updateDivBackground(containerWidget.elements.depth, messageData.depth_image_base64, "Depth N/A");
     updateDivBackground(containerWidget.elements.openpose, messageData.openpose_image_base64, "Pose N/A");
@@ -141,11 +141,11 @@ function updateNodeImagePreviews(node, messageData) {
 function addPreviewWidgets(node) {
     let containerWidget = node.widgets?.find(w => w.name === "http_preview_container");
     if (!containerWidget) {
-        console.log("[Electron Listener JS] Adding preview container widget for node:", node.id);
+        console.log("[A3D Listener JS] Adding preview container widget for node:", node.id);
 
         // --- Create Container ---
         const containerDiv = document.createElement("div");
-        containerDiv.className = "electron-http-preview-container";
+        containerDiv.className = "A3D-http-preview-container";
         containerDiv.style.width = "100%";
         containerDiv.style.display = "flex";
         containerDiv.style.flexDirection = "column";
@@ -153,7 +153,7 @@ function addPreviewWidgets(node) {
 
         // --- Create Main Preview Div ---
         const mainDiv = document.createElement("div");
-        mainDiv.className = "electron-http-preview-main";
+        mainDiv.className = "A3D-http-preview-main";
         mainDiv.style.width = "100%";
         mainDiv.style.height = "200px";
         mainDiv.style.backgroundColor = "#222";
@@ -169,7 +169,7 @@ function addPreviewWidgets(node) {
 
         // --- Create Metadata Div ---
         const metadataDiv = document.createElement("div");
-        metadataDiv.className = "electron-http-preview-metadata";
+        metadataDiv.className = "A3D-http-preview-metadata";
         metadataDiv.style.width = "100%";
         metadataDiv.style.padding = "8px";
         metadataDiv.style.backgroundColor = "#333";
@@ -182,7 +182,7 @@ function addPreviewWidgets(node) {
 
         // --- Create Optional Images Row ---
         const optionalRowDiv = document.createElement("div");
-        optionalRowDiv.className = "electron-http-preview-row";
+        optionalRowDiv.className = "A3D-http-preview-row";
         optionalRowDiv.style.display = "flex";
         optionalRowDiv.style.width = "100%";
         optionalRowDiv.style.height = "80px";
@@ -192,7 +192,7 @@ function addPreviewWidgets(node) {
         // Create optional divs with helper function
         const createOptionalDiv = (label) => {
             const div = document.createElement("div");
-            div.className = `electron-http-preview-${label.toLowerCase()}`;
+            div.className = `A3D-http-preview-${label.toLowerCase()}`;
             div.style.flex = "1";
             div.style.height = "100%";
             div.style.backgroundColor = "#222";
@@ -241,10 +241,10 @@ function addPreviewWidgets(node) {
 
             // Set initial node size
             node.setSize(containerWidget.computeSize(node.size[0]));
-            console.log("[Electron Listener JS] Successfully added preview container widget.");
+            console.log("[A3D Listener JS] Successfully added preview container widget.");
 
         } catch (e) {
-            console.error("[Electron Listener JS] Error adding preview container widget:", e);
+            console.error("[A3D Listener JS] Error adding preview container widget:", e);
         }
     }
     return containerWidget;
@@ -260,7 +260,7 @@ function connectSSE() {
 
     // Close existing connection if any
     if (sseSource) {
-        console.log("[Electron Listener JS] Closing existing SSE connection.");
+        console.log("[A3D Listener JS] Closing existing SSE connection.");
         sseSource.close();
         sseSource = null;
     }
@@ -274,13 +274,13 @@ function connectSSE() {
     // --- End of URL construction ---
 
 
-    console.log(`[Electron Listener JS] Connecting to SSE endpoint: ${sseUrl}`); // Log the correct URL
+    console.log(`[A3D Listener JS] Connecting to SSE endpoint: ${sseUrl}`); // Log the correct URL
 
     try {
         sseSource = new EventSource(sseUrl);
 
         sseSource.onopen = function(event) {
-            console.log("[Electron Listener JS] SSE Connection established.");
+            console.log("[A3D Listener JS] SSE Connection established.");
             // Reset retry delay on successful connection
         };
 
@@ -290,44 +290,44 @@ function connectSSE() {
 
                 // --- Use new message type 'new_images' ---
                 if (messageData.type === "new_images") {
-                    console.log("[Electron Listener JS] Received new images via SSE.");
+                    console.log("[A3D Listener JS] Received new images via SSE.");
                     const graph = app.graph;
-                    const listenerNodes = graph.findNodesByType("ElectronHttpListener");
+                    const listenerNodes = graph.findNodesByType("A3DListener");
 
                     if (listenerNodes && listenerNodes.length > 0) {
-                        console.log(`[Electron Listener JS] Found ${listenerNodes.length} listener node(s). Updating...`);
+                        console.log(`[A3D Listener JS] Found ${listenerNodes.length} listener node(s). Updating...`);
                         listenerNodes.forEach(node => {
                             // --- Call the new update function ---
                             updateNodeImagePreviews(node, messageData);
                             // ---
                         });
                     } else {
-                        console.log("[Electron Listener JS] No ElectronHttpListener nodes found on the graph to update.");
+                        console.log("[A3D Listener JS] No A3DListener nodes found on the graph to update.");
                     }
                 // Handle old 'new_image' type for backward compatibility? Optional.
                 } else if (messageData.type === "new_image" && messageData.image_base64) {
-                     console.log("[Electron Listener JS] Received legacy 'new_image' via SSE. Updating main preview only.");
+                     console.log("[A3D Listener JS] Received legacy 'new_image' via SSE. Updating main preview only.");
                      const graph = app.graph;
-                     const listenerNodes = graph.findNodesByType("ElectronHttpListener");
+                     const listenerNodes = graph.findNodesByType("A3DListener");
                      if (listenerNodes && listenerNodes.length > 0) {
                          listenerNodes.forEach(node => updateNodeImagePreviews(node, messageData)); // Still use new func
                      }
                 } else if (messageData.type === "new_data") {
-                     console.log("[Electron Listener JS] Received non-image data via SSE:", messageData.payload);
+                     console.log("[A3D Listener JS] Received non-image data via SSE:", messageData.payload);
                 }
 
             } catch (e) {
-                console.error("[Electron Listener JS] Error parsing SSE message data:", e, "Raw data:", event.data);
+                console.error("[A3D Listener JS] Error parsing SSE message data:", e, "Raw data:", event.data);
             }
         };
 
         sseSource.onerror = function(event) {
-            console.error("[Electron Listener JS] SSE Connection error:", event);
+            console.error("[A3D Listener JS] SSE Connection error:", event);
             // Check if the error is due to connection refusal or other issues
             if (sseSource.readyState === EventSource.CLOSED) {
-                 console.log("[Electron Listener JS] SSE state is CLOSED.");
+                 console.log("[A3D Listener JS] SSE state is CLOSED.");
             } else {
-                 console.log("[Electron Listener JS] SSE state:", sseSource.readyState);
+                 console.log("[A3D Listener JS] SSE state:", sseSource.readyState);
             }
 
             sseSource.close(); // Close the connection on error
@@ -335,17 +335,17 @@ function connectSSE() {
 
             // Implement exponential backoff for retries
             const retryDelay = 5000; // Retry after 5 seconds
-            console.log(`[Electron Listener JS] SSE connection failed or lost. Retrying in ${retryDelay / 1000} seconds...`);
+            console.log(`[A3D Listener JS] SSE connection failed or lost. Retrying in ${retryDelay / 1000} seconds...`);
             if (!sseRetryTimeout) { // Avoid scheduling multiple retries
                  sseRetryTimeout = setTimeout(connectSSE, retryDelay);
             }
         };
 
     } catch (e) {
-        console.error("[Electron Listener JS] Failed to create EventSource:", e);
+        console.error("[A3D Listener JS] Failed to create EventSource:", e);
         // Schedule a retry if creation fails
         const retryDelay = 10000; // Longer delay if initial creation fails
-         console.log(`[Electron Listener JS] Retrying SSE connection in ${retryDelay / 1000} seconds...`);
+         console.log(`[A3D Listener JS] Retrying SSE connection in ${retryDelay / 1000} seconds...`);
          if (!sseRetryTimeout) {
              sseRetryTimeout = setTimeout(connectSSE, retryDelay);
          }
@@ -355,31 +355,31 @@ function connectSSE() {
 
 // --- ComfyUI Extension Registration ---
 app.registerExtension({
-    name: "Comfy.ElectronHttpListener.ImagePreviewSSE",
+    name: "Comfy.A3DListener.ImagePreviewSSE",
     setup() {
-        console.log("[Electron Listener JS] Extension setup(). Connecting SSE...");
+        console.log("[A3D Listener JS] Extension setup(). Connecting SSE...");
         connectSSE();
     },
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name === "ElectronHttpListener") {
-            console.log("[Electron Listener JS] Matched node type: ElectronHttpListener.");
+        if (nodeData.name === "A3DListener") {
+            console.log("[A3D Listener JS] Matched node type: A3DListener.");
 
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function() {
-                console.log("[Electron Listener JS] onNodeCreated triggered for node:", this.title, "ID:", this.id);
+                console.log("[A3D Listener JS] onNodeCreated triggered for node:", this.title, "ID:", this.id);
                 originalOnNodeCreated?.apply(this, arguments);
                 // --- Ensure the preview container widget is created ---
                 addPreviewWidgets(this); // Use new function name
                 // ---
-                console.log("[Electron Listener JS] onNodeCreated finished for:", this.title);
+                console.log("[A3D Listener JS] onNodeCreated finished for:", this.title);
             }
-            console.log("[Electron Listener JS] onNodeCreated override applied (for container widget).");
+            console.log("[A3D Listener JS] onNodeCreated override applied (for container widget).");
 
             // Add onRemoved callback to potentially clean up? (Optional)
             const originalOnRemoved = nodeType.prototype.onRemoved;
             nodeType.prototype.onRemoved = function() {
-                 console.log("[Electron Listener JS] Node removed:", this.id);
+                 console.log("[A3D Listener JS] Node removed:", this.id);
                  // Cleanup logic if needed
                  originalOnRemoved?.apply(this, arguments);
             };
@@ -388,4 +388,4 @@ app.registerExtension({
     },
 });
 
-console.log("[Electron Listener JS] Extension registration call completed (SSE Version)."); 
+console.log("[A3D Listener JS] Extension registration call completed (SSE Version)."); 

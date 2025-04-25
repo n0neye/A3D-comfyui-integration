@@ -1,2 +1,2 @@
-# m3ud-custom-node
+# A3D ComfyUI Integration
  

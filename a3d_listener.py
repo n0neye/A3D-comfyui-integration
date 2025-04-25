@@ -40,7 +40,7 @@ sse_message_queue = queue.Queue() # Queue to send messages from POST handler to 
 # --- Configuration ---
 DEFAULT_PORT = 8199 # Choose a port (avoid commonly used ports like 8188)
 # Try to get port from environment variable for flexibility
-LISTEN_PORT = int(os.environ.get('ELECTRON_LISTENER_PORT', DEFAULT_PORT))
+LISTEN_PORT = int(os.environ.get('A3D_LISTENER_PORT', DEFAULT_PORT))
 LISTEN_HOST = '0.0.0.0' # Listen on all network interfaces
 
 # --- Function to broadcast messages to SSE clients ---
@@ -151,7 +151,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/plain')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(f'Electron Listener Node HTTP Server active on port {LISTEN_PORT}. SSE endpoint at /events'.encode('utf-8'))
+            self.wfile.write(f'A3D Listener Node HTTP Server active on port {LISTEN_PORT}. SSE endpoint at /events'.encode('utf-8'))
 
     def do_POST(self):
         """Handles incoming data via POST, stores optional images, and pushes to SSE queue"""
@@ -328,13 +328,13 @@ def start_http_server(host, port):
     global server_instance, server_thread, server_started_flag
     # Check if server is already running (based on thread object)
     if server_thread and server_thread.is_alive():
-        print(f"[Electron Listener] Server thread already running on port {port}.")
+        print(f"[A3D Listener] Server thread already running on port {port}.")
         server_started_flag = True # Ensure flag is True
         return
 
     # Check if port is already in use by another process
     if is_port_in_use(port):
-         print(f"[Electron Listener] Error: Port {port} is already in use by another process. Cannot start server.")
+         print(f"[A3D Listener] Error: Port {port} is already in use by another process. Cannot start server.")
          # If port is in use, we can't assume it's our own old instance, so mark as not started
          server_started_flag = False
          return # Don't start server
@@ -343,17 +343,17 @@ def start_http_server(host, port):
         server_address = (host, port)
         # Use the combined handler
         server_instance = ThreadingHTTPServer(server_address, SimpleHTTPRequestHandler)
-        print(f"[Electron Listener] Starting Threading HTTP server on {host}:{port}...")
+        print(f"[A3D Listener] Starting Threading HTTP server on {host}:{port}...")
 
         # Run server in background thread
         # daemon=True ensures this thread exits when the ComfyUI main process exits
         server_thread = threading.Thread(target=server_instance.serve_forever, daemon=True)
         server_thread.start()
         server_started_flag = True # Mark server as successfully started
-        print(f"[Electron Listener] Threading HTTP server started successfully on port {port}. SSE at /events")
+        print(f"[A3D Listener] Threading HTTP server started successfully on port {port}. SSE at /events")
 
     except Exception as e:
-        print(f"[Electron Listener] Failed to start Threading HTTP server on port {port}: {e}")
+        print(f"[A3D Listener] Failed to start Threading HTTP server on port {port}: {e}")
         server_instance = None
         server_thread = None
         server_started_flag = False # Mark server start as failed
@@ -384,16 +384,16 @@ def base64_to_tensor(base64_str):
         return None
 
 # --- ComfyUI Node Class ---
-class ElectronHttpListenerNode:
+class A3DListenerNode:
     _server_started = False
     
     def __init__(self):
         # Use class-level flag to ensure start_http_server is only called once
         # This typically happens when ComfyUI loads the node
-        if not ElectronHttpListenerNode._server_started:
-            print("[Electron Listener Node] Initializing...")
+        if not A3DListenerNode._server_started:
+            print("[A3D Listener Node] Initializing...")
             start_http_server(LISTEN_HOST, LISTEN_PORT)
-            ElectronHttpListenerNode._server_started = server_started_flag # Update class flag to actual start status
+            A3DListenerNode._server_started = server_started_flag # Update class flag to actual start status
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -476,7 +476,7 @@ class ElectronHttpListenerNode:
 # --- Ensure server starts when ComfyUI loads ---
 # Try to start server when module loads, don't wait for node instantiation
 # This is more reliable because ComfyUI might not instantiate all nodes immediately
-if not ElectronHttpListenerNode._server_started:
-    print("[Electron Listener Module] Attempting server start on module load...")
+if not A3DListenerNode._server_started:
+    print("[A3D Listener Module] Attempting server start on module load...")
     start_http_server(LISTEN_HOST, LISTEN_PORT)
-    ElectronHttpListenerNode._server_started = server_started_flag
+    A3DListenerNode._server_started = server_started_flag
