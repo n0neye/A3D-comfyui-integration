@@ -96,32 +96,32 @@ function updateNodeImagePreviews(node, messageData) {
 
     // Add a new function to update the metadata div
     const updateMetadataDiv = (divElement, metadata) => {
-        if (!divElement) return;
+        // if (!divElement) return;
         
-        // Get metadata values
-        const prompt = metadata.prompt;
-        const negPrompt = metadata.negative_prompt;
-        const seed = metadata.seed;
+        // // Get metadata values
+        // const prompt = metadata.prompt;
+        // const negPrompt = metadata.negative_prompt;
+        // const seed = metadata.seed;
         
-        // Create formatted metadata text
-        let metadataText = '';
-        if (prompt) {
-            metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
-        }
-        if (negPrompt) {
-            metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
-        }
-        if (seed !== null && seed !== undefined) {
-            metadataText += `<strong>Seed:</strong> ${seed}`;
-        }
+        // // Create formatted metadata text
+        // let metadataText = '';
+        // if (prompt) {
+        //     metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
+        // }
+        // if (negPrompt) {
+        //     metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
+        // }
+        // if (seed !== null && seed !== undefined) {
+        //     metadataText += `<strong>Seed:</strong> ${seed}`;
+        // }
         
-        // If no metadata, display placeholder text
-        if (!metadataText) {
-            metadataText = "No metadata available";
-        }
+        // // If no metadata, display placeholder text
+        // if (!metadataText) {
+        //     metadataText = "No metadata available";
+        // }
         
-        // Update div content
-        divElement.innerHTML = metadataText;
+        // // Update div content
+        // divElement.innerHTML = metadataText;
     };
 
     // Update backgrounds for all divs
@@ -167,6 +167,16 @@ function addPreviewWidgets(node) {
         mainDiv.style.backgroundRepeat = "no-repeat";
         containerDiv.appendChild(mainDiv);
 
+
+        // --- Create Optional Images Row ---
+        const optionalRowDiv = document.createElement("div");
+        optionalRowDiv.className = "A3D-http-preview-row";
+        optionalRowDiv.style.display = "flex";
+        optionalRowDiv.style.width = "100%";
+        optionalRowDiv.style.height = "80px";
+        optionalRowDiv.style.gap = "4px";
+        containerDiv.appendChild(optionalRowDiv);
+
         // --- Create Metadata Div ---
         const metadataDiv = document.createElement("div");
         metadataDiv.className = "A3D-http-preview-metadata";
@@ -177,17 +187,8 @@ function addPreviewWidgets(node) {
         metadataDiv.style.fontSize = "12px";
         metadataDiv.style.maxHeight = "80px";
         metadataDiv.style.overflowY = "auto";
-        metadataDiv.innerHTML = "No metadata available";
+        metadataDiv.innerHTML = "";
         containerDiv.appendChild(metadataDiv);
-
-        // --- Create Optional Images Row ---
-        const optionalRowDiv = document.createElement("div");
-        optionalRowDiv.className = "A3D-http-preview-row";
-        optionalRowDiv.style.display = "flex";
-        optionalRowDiv.style.width = "100%";
-        optionalRowDiv.style.height = "80px";
-        optionalRowDiv.style.gap = "4px";
-        containerDiv.appendChild(optionalRowDiv);
 
         // Create optional divs with helper function
         const createOptionalDiv = (label) => {
@@ -252,12 +253,6 @@ function addPreviewWidgets(node) {
 
 // --- Function to connect to SSE endpoint ---
 function connectSSE() {
-    // Clear any existing retry timeout
-    if (sseRetryTimeout) {
-        clearTimeout(sseRetryTimeout);
-        sseRetryTimeout = null;
-    }
-
     // Close existing connection if any
     if (sseSource) {
         console.log("[A3D Listener JS] Closing existing SSE connection.");
@@ -265,16 +260,16 @@ function connectSSE() {
         sseSource = null;
     }
 
-    // --- Construct the correct absolute URL ---
-    // Get the current hostname (e.g., 127.0.0.1 or localhost)
-    const hostname = window.location.hostname;
-    // Define the correct port for our listener server
-    const listenerPort = 8199; // Make sure this matches LISTEN_PORT in Python
-    const sseUrl = `http://${hostname}:${listenerPort}/events`;
-    // --- End of URL construction ---
+    // Clear any existing retry timeout
+    if (sseRetryTimeout) {
+        clearTimeout(sseRetryTimeout);
+        sseRetryTimeout = null;
+    }
 
-
-    console.log(`[A3D Listener JS] Connecting to SSE endpoint: ${sseUrl}`); // Log the correct URL
+    // Use the ComfyUI integrated endpoint
+    const sseUrl = `/a3d_events`;
+    
+    console.log(`[A3D Listener JS] Connecting to SSE endpoint: ${sseUrl}`);
 
     try {
         sseSource = new EventSource(sseUrl);
@@ -352,6 +347,20 @@ function connectSSE() {
     }
 }
 
+// Update the function to send data to the server if needed
+function sendDataToServer(data) {
+    fetch('/a3d_data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => console.log('Success:', data))
+    .catch(error => console.error('Error:', error));
+}
 
 // --- ComfyUI Extension Registration ---
 app.registerExtension({

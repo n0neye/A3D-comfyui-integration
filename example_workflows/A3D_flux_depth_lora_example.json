@@ -230,14 +230,7 @@
       "flags": {},
       "order": 1,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "trigger",
-          "shape": 7,
-          "type": "*",
-          "link": null
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
           "name": "color_image",
