@@ -7,14 +7,13 @@
 
 ## Installation
 
-1. Open ComfyUI Manager
-1. Install via Git URL -> add `https://github.com/n0neye/A3D-comfyui-integration`
-    - If you see `This action is not allowed with this security level configuration` error, you can change the security level from `normal` to `weak` in the `ComfyUI\user\default\ComfyUI-Manager\config.ini` file, restart ComfyUI and try again.
-1. After installation, restart ComfyUI
+1. Install via Custom Node Manager: Search for `A3D ComfyUI Integration` and install it
+1. Restart ComfyUI
 
 ## Usage 
 1. Add `A3D Listener` to your existing workflow, or open the [example workflow](https://github.com/n0neye/A3D-comfyui-integration/blob/main/example_workflows/A3D_flux_depth_lora_example.json)
 1. In the Render section of A3D, click `Send to ComfyUI`, this will send the color & depth images to ComfyUI
+*Note: Currently, your comfyUI needs to be running on the default port (8188) for this to work.
 
 ## TODO
 - [ ] Add OpenPose support
