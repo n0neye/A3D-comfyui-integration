@@ -258,12 +258,13 @@ def base64_to_tensor(base64_str):
 # --- ComfyUI Node Class ---
 class A3DListenerNode:
     _server_started = False
+    _last_processed_timestamp = 0  # Track the last timestamp we processed
     
     def __init__(self):
         if not A3DListenerNode._server_started:
             print("[A3D Listener Node] Initializing...")
-            # Start the SSE message processor task
-            asyncio.create_task(sse_message_processor())
+            # Create a task to run the SSE message processor
+            PromptServer.instance.loop.create_task(sse_message_processor())
             A3DListenerNode._server_started = True
 
     @classmethod
@@ -273,10 +274,22 @@ class A3DListenerNode:
             "optional": {}
         }
     
-    # TODO: better way to handle input changes
     @classmethod
-    def IS_CHANGED(cls, trigger):
-        return float("nan")
+    def IS_CHANGED(cls):
+        global latest_received_data, data_lock
+        
+        with data_lock:
+            current_timestamp = latest_received_data["timestamp"]
+        
+        # Compare the current timestamp with the last processed one
+        if current_timestamp > cls._last_processed_timestamp:
+            # New data is available - return the current timestamp 
+            # to signal that the node should execute
+            return current_timestamp
+        
+        # No new data, return the last processed timestamp
+        # to signal that the node shouldn't execute
+        return cls._last_processed_timestamp
     
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "STRING", "STRING", "INT")
     RETURN_NAMES = ("color_image", "depth_image", "openpose_image", "prompt", "negative_prompt", "seed")
@@ -302,6 +315,8 @@ class A3DListenerNode:
         with data_lock:
             # Get data stored by the last request
             current_timestamp = latest_received_data["timestamp"]
+            # Update the class-level last processed timestamp
+            A3DListenerNode._last_processed_timestamp = current_timestamp
             # Get base64 strings and metadata
             color_b64 = latest_received_data["color_image_base64"]
             depth_b64 = latest_received_data["depth_image_base64"]
