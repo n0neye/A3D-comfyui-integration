@@ -9,6 +9,6 @@ Repository = "https://github.com/n0neye/A3D-comfyui-integration"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = ""
-DisplayName = "A3D-comfyui-integration"
-Icon = ""
+PublisherId = "n0neye"
+DisplayName = "A3D ComfyUI Integration"
+Icon = "https://storage.googleapis.com/nontech-webpage/ai-editor/assets/logo_circle_512.png"
