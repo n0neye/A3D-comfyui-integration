@@ -241,16 +241,28 @@ def base64_to_tensor(base64_str):
             base64_str = base64_str.split("base64,")[1]
 
         image_data = base64.b64decode(base64_str)
-        img = Image.open(BytesIO(image_data)).convert('RGB')
-        image_np = np.array(img).astype(np.uint8)
-
-        if image_np.ndim == 3 and image_np.shape[2] == 3:
-            # Convert HWC numpy array to BHWC tensor [Batch, Height, Width, Channels]
-            image_tensor = torch.from_numpy(image_np).unsqueeze(0)
-            return image_tensor
-        else:
-            print(f"[Tensor Conversion] Warning: Decoded image has unexpected shape {image_np.shape}")
-            return None
+        img = Image.open(BytesIO(image_data))
+        
+        # Handle different image modes
+        if img.mode == 'RGBA':
+            # Convert RGBA to RGB
+            img_rgb = Image.new('RGB', img.size, (0, 0, 0))
+            img_rgb.paste(img, mask=img.split()[3])  # Use alpha as mask
+            img = img_rgb
+        elif img.mode == 'L':
+            # For grayscale, convert to RGB by duplicating the channel
+            img = img.convert('RGB')
+        elif img.mode != 'RGB':
+            # Convert any other mode to RGB
+            img = img.convert('RGB')
+            
+        # Convert to numpy array
+        image_np = np.array(img).astype(np.float32) / 255.0 # Convert to float32 and normalize
+        
+        # Create tensor with batch dimension [B, H, W, C]
+        image_tensor = torch.from_numpy(image_np).unsqueeze(0) # Now float32
+        
+        return image_tensor
     except Exception as e:
         print(f"[Tensor Conversion] Error converting base64 to tensor: {e}")
         return None
@@ -261,11 +273,17 @@ class A3DListenerNode:
     _last_processed_timestamp = 0  # Track the last timestamp we processed
     
     def __init__(self):
-        if not A3DListenerNode._server_started:
-            print("[A3D Listener Node] Initializing...")
-            # Create a task to run the SSE message processor
-            PromptServer.instance.loop.create_task(sse_message_processor())
-            A3DListenerNode._server_started = True
+        # Check if the SSE processor task is already running
+        # This avoids creating multiple tasks if the node is instantiated multiple times
+        loop = PromptServer.instance.loop
+        tasks = [t for t in asyncio.all_tasks(loop) if t.get_coro().__name__ == 'sse_message_processor']
+        if not tasks:
+            print("[A3D Listener Node] Initializing SSE processor...")
+            loop.create_task(sse_message_processor())
+        else:
+            print("[A3D Listener Node] SSE processor already running.")
+        # Note: _server_started flag might not be reliable across reloads, checking tasks is better.
+        # A3DListenerNode._server_started = True # This flag might be less useful now
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -301,7 +319,8 @@ class A3DListenerNode:
         global latest_received_data, data_lock
         
         # Create a default empty tensor for missing images
-        empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.uint8)
+        # Ensure it matches the expected float32 type and normalized range
+        empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
         
         # --- Variables for tensors and metadata ---
         color_tensor = None
@@ -350,6 +369,12 @@ class A3DListenerNode:
         print("[Node Execute] Returning image tensors and metadata.", flush=True)
         return (color_tensor, depth_tensor, openpose_tensor, prompt_value, negative_prompt_value, seed_value)
 
-# Initialize the SSE processor when the module loads
-print("[A3D Listener Module] Initializing with ComfyUI routes")
-PromptServer.instance.loop.create_task(sse_message_processor())
+# Initialize the SSE processor when the module loads (redundant if done in __init__)
+# print("[A3D Listener Module] Initializing with ComfyUI routes")
+# loop = PromptServer.instance.loop
+# tasks = [t for t in asyncio.all_tasks(loop) if t.get_coro().__name__ == 'sse_message_processor']
+# if not tasks:
+#     print("[A3D Listener Module] Creating SSE processor task from module level.")
+#     loop.create_task(sse_message_processor())
+# else:
+#     print("[A3D Listener Module] SSE processor task already exists.")
