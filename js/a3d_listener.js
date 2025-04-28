@@ -232,6 +232,8 @@ function connectSSE() {
         };
 
         sseSource.onmessage = function(event) {
+            // Log raw data arrival immediately
+            console.log("[A3D Listener JS] Raw SSE message received");
             try {
                 const messageData = JSON.parse(event.data);
 
