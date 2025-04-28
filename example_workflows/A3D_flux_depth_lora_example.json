@@ -1,8 +1,8 @@
 {
   "id": "5ee0df84-47bc-4b71-a1ab-ec0ce5895802",
   "revision": 0,
-  "last_node_id": 48,
-  "last_link_id": 81,
+  "last_node_id": 50,
+  "last_link_id": 82,
   "nodes": [
     {
       "id": 8,
@@ -48,99 +48,6 @@
       "widgets_values": []
     },
     {
-      "id": 31,
-      "type": "UNETLoader",
-      "pos": [
-        208.3939208984375,
-        -194.03028869628906
-      ],
-      "size": [
-        315,
-        82
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "slot_index": 0,
-          "links": [
-            74
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.27",
-        "Node name for S&R": "UNETLoader"
-      },
-      "widgets_values": [
-        "flux1-dev-fp8.safetensors",
-        "default"
-      ]
-    },
-    {
-      "id": 42,
-      "type": "A3DListener",
-      "pos": [
-        -234.8533172607422,
-        -183.2707061767578
-      ],
-      "size": [
-        298.86669921875,
-        506
-      ],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "color_image",
-          "type": "IMAGE",
-          "links": null
-        },
-        {
-          "name": "depth_image",
-          "type": "IMAGE",
-          "links": [
-            77
-          ]
-        },
-        {
-          "name": "openpose_image",
-          "type": "IMAGE",
-          "links": null
-        },
-        {
-          "name": "prompt",
-          "type": "STRING",
-          "links": []
-        },
-        {
-          "name": "negative_prompt",
-          "type": "STRING",
-          "links": []
-        },
-        {
-          "name": "seed",
-          "type": "INT",
-          "links": null
-        }
-      ],
-      "properties": {
-        "aux_id": "yi-nontech/A3D-comfyui-integration",
-        "ver": "f2da7725cf4b854566f6ebf610ff193ba1919feb",
-        "Node name for S&R": "A3DListener"
-      },
-      "widgets_values": [
-        ""
-      ]
-    },
-    {
       "id": 34,
       "type": "DualCLIPLoader",
       "pos": [
@@ -152,7 +59,7 @@
         122
       ],
       "flags": {},
-      "order": 2,
+      "order": 0,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -189,7 +96,7 @@
         82
       ],
       "flags": {},
-      "order": 5,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
@@ -230,7 +137,7 @@
         58
       ],
       "flags": {},
-      "order": 3,
+      "order": 1,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -286,7 +193,7 @@
         {
           "name": "pixels",
           "type": "IMAGE",
-          "link": 77
+          "link": 82
         }
       ],
       "outputs": [
@@ -334,7 +241,7 @@
         88
       ],
       "flags": {},
-      "order": 4,
+      "order": 2,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -354,12 +261,12 @@
       ],
       "size": [
         285.6000061035156,
-        76
+        88
       ],
       "flags": {
         "collapsed": false
       },
-      "order": 7,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -389,49 +296,6 @@
       ],
       "color": "#322",
       "bgcolor": "#533"
-    },
-    {
-      "id": 23,
-      "type": "CLIPTextEncode",
-      "pos": [
-        212.285400390625,
-        61.74370574951172
-      ],
-      "size": [
-        285.6000061035156,
-        76
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "link": 62
-        }
-      ],
-      "outputs": [
-        {
-          "name": "CONDITIONING",
-          "type": "CONDITIONING",
-          "slot_index": 0,
-          "links": [
-            41
-          ]
-        }
-      ],
-      "title": "CLIP Text Encode (Positive Prompt)",
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.27",
-        "Node name for S&R": "CLIPTextEncode"
-      },
-      "widgets_values": [
-        "dancing girl on the stage"
-      ],
-      "color": "#232",
-      "bgcolor": "#353"
     },
     {
       "id": 26,
@@ -556,13 +420,149 @@
         "Node name for S&R": "KSampler"
       },
       "widgets_values": [
-        160372069934956,
+        932416772653899,
         "randomize",
         20,
         1,
         "euler",
         "normal",
         1
+      ]
+    },
+    {
+      "id": 23,
+      "type": "CLIPTextEncode",
+      "pos": [
+        212.285400390625,
+        61.74370574951172
+      ],
+      "size": [
+        285.6000061035156,
+        88
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 62
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            41
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Positive Prompt)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.27",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "a girl and a cat"
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 31,
+      "type": "UNETLoader",
+      "pos": [
+        207.0606689453125,
+        -182.03028869628906
+      ],
+      "size": [
+        315,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            74
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.27",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "flux1-dev-fp8.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 50,
+      "type": "A3DListener",
+      "pos": [
+        -211.230712890625,
+        -188.65164184570312
+      ],
+      "size": [
+        244,
+        514
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "color_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "depth_image",
+          "type": "IMAGE",
+          "links": [
+            82
+          ]
+        },
+        {
+          "name": "openpose_image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "a3d-comfyui-integration",
+        "ver": "c49443077d4d233c49c993c2168585766b6b5efb",
+        "Node name for S&R": "A3DListener"
+      },
+      "widgets_values": [
+        ""
       ]
     }
   ],
@@ -680,8 +680,8 @@
       "MODEL"
     ],
     [
-      77,
-      42,
+      82,
+      50,
       1,
       35,
       3,
@@ -692,10 +692,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.6830134553650705,
+      "scale": 1,
       "offset": [
-        1107.3266948845378,
-        936.723332060047
+        513.8973955670177,
+        575.6517049490643
       ]
     },
     "ue_links": [],

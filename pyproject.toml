@@ -1,7 +1,7 @@
 [project]
 name = "a3d-comfyui-integration"
 description = "[a/A3D](https://github.com/n0neye/A3D) is an AI x 3D hybrid tool that allows you to compose 3D scenes and render them with AI. This integration allows you to send the color & depth images to ComfyUI. You can use it as a pose controller, or scene composer for your ComfyUI workflows."
-version = "1.0.0"
+version = "1.0.1"
 license = {file = "LICENSE"}
 
 [project.urls]
