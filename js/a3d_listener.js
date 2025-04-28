@@ -94,45 +94,12 @@ function updateNodeImagePreviews(node, messageData) {
         }
     };
 
-    // Add a new function to update the metadata div
-    const updateMetadataDiv = (divElement, metadata) => {
-        // if (!divElement) return;
-        
-        // // Get metadata values
-        // const prompt = metadata.prompt;
-        // const negPrompt = metadata.negative_prompt;
-        // const seed = metadata.seed;
-        
-        // // Create formatted metadata text
-        // let metadataText = '';
-        // if (prompt) {
-        //     metadataText += `<strong>Prompt:</strong> ${prompt}<br>`;
-        // }
-        // if (negPrompt) {
-        //     metadataText += `<strong>Negative:</strong> ${negPrompt}<br>`;
-        // }
-        // if (seed !== null && seed !== undefined) {
-        //     metadataText += `<strong>Seed:</strong> ${seed}`;
-        // }
-        
-        // // If no metadata, display placeholder text
-        // if (!metadataText) {
-        //     metadataText = "No metadata available";
-        // }
-        
-        // // Update div content
-        // divElement.innerHTML = metadataText;
-    };
-
     // Update backgrounds for all divs
     console.log("[A3D Listener JS] Updating preview backgrounds...");
     updateDivBackground(containerWidget.elements.main, messageData.color_image_base64, "Waiting...");
     updateDivBackground(containerWidget.elements.depth, messageData.depth_image_base64, "Depth N/A");
     updateDivBackground(containerWidget.elements.openpose, messageData.openpose_image_base64, "Pose N/A");
     
-    // Update metadata div
-    updateMetadataDiv(containerWidget.elements.metadata, messageData);
-
     // Request redraw after attempting updates (might be redundant if resize happens)
     node.setDirtyCanvas(true, true);
 }
@@ -177,19 +144,6 @@ function addPreviewWidgets(node) {
         optionalRowDiv.style.gap = "4px";
         containerDiv.appendChild(optionalRowDiv);
 
-        // --- Create Metadata Div ---
-        const metadataDiv = document.createElement("div");
-        metadataDiv.className = "A3D-http-preview-metadata";
-        metadataDiv.style.width = "100%";
-        metadataDiv.style.padding = "8px";
-        metadataDiv.style.backgroundColor = "#333";
-        metadataDiv.style.color = "#ccc";
-        metadataDiv.style.fontSize = "12px";
-        metadataDiv.style.maxHeight = "80px";
-        metadataDiv.style.overflowY = "auto";
-        metadataDiv.innerHTML = "";
-        containerDiv.appendChild(metadataDiv);
-
         // Create optional divs with helper function
         const createOptionalDiv = (label) => {
             const div = document.createElement("div");
@@ -220,7 +174,6 @@ function addPreviewWidgets(node) {
             // Store references to inner divs for later updates
             containerWidget.elements = {
                 main: mainDiv,           // This is now the color image
-                metadata: metadataDiv,   // New metadata div
                 depth: depthDiv,
                 openpose: openposeDiv
             };
@@ -228,7 +181,6 @@ function addPreviewWidgets(node) {
             // Compute size based on container layout
             containerWidget.computeSize = function(width) {
                 let mainHeight = 200; // Default
-                let metadataHeight = 80; // Metadata area height
                 let rowHeight = 80; // Default
                 if (this.elements?.main?.style.height?.endsWith('px')) {
                     mainHeight = parseInt(this.elements.main.style.height, 10);
@@ -236,7 +188,7 @@ function addPreviewWidgets(node) {
                 if (this.elements?.depth?.style.height?.endsWith('px')) {
                     rowHeight = parseInt(this.elements.depth.style.height, 10);
                 }
-                const totalHeight = mainHeight + metadataHeight + rowHeight + 16; // Add gap + padding
+                const totalHeight = mainHeight + rowHeight + 16; // Add gap + padding
                 return [width, totalHeight];
             };
 
