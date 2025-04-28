@@ -18,3 +18,7 @@
 ## TODO
 - [ ] Add OpenPose support
 - [ ] Add animation and video support
+
+## Licensing Clarification
+You can freely use the A3D-ComfyUI-Integration (MIT license) in your ComfyUI workflows, including for paid/commercial work.
+Using the node does not require you to open-source your workflow or project, as long as you do not modify the main A3D project (AGPL-3.0).
