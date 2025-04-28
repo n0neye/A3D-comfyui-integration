@@ -372,27 +372,12 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "A3DListener") {
-            console.log("[A3D Listener JS] Matched node type: A3DListener.");
-
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function() {
-                console.log("[A3D Listener JS] onNodeCreated triggered for node:", this.title, "ID:", this.id);
                 originalOnNodeCreated?.apply(this, arguments);
-                // --- Ensure the preview container widget is created ---
                 addPreviewWidgets(this); // Use new function name
-                // ---
                 console.log("[A3D Listener JS] onNodeCreated finished for:", this.title);
             }
-            console.log("[A3D Listener JS] onNodeCreated override applied (for container widget).");
-
-            // Add onRemoved callback to potentially clean up? (Optional)
-            const originalOnRemoved = nodeType.prototype.onRemoved;
-            nodeType.prototype.onRemoved = function() {
-                 console.log("[A3D Listener JS] Node removed:", this.id);
-                 // Cleanup logic if needed
-                 originalOnRemoved?.apply(this, arguments);
-            };
-
         }
     },
 });
